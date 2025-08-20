@@ -1,0 +1,34 @@
+{
+  "demoImages": [
+    {
+      "name": "Cereal Box",
+      "filename": "cereal-label.jpg",
+      "mockOCRText": "INGREDIENTS: Whole grain oats, sugar, salt, natural flavor, vitamin E (mixed tocopherols) added to preserve freshness.",
+      "expectedIngredients": ["whole grain oats", "sugar", "salt", "natural flavor", "vitamin e"]
+    },
+    {
+      "name": "Snack Bar", 
+      "filename": "snack-bar-label.jpg",
+      "mockOCRText": "INGREDIENTS: Almonds, dates, cocoa powder, vanilla extract, sea salt.",
+      "expectedIngredients": ["almonds", "dates", "cocoa powder", "vanilla extract", "sea salt"]
+    },
+    {
+      "name": "Yogurt Cup",
+      "filename": "yogurt-label.jpg", 
+      "mockOCRText": "INGREDIENTS: Cultured pasteurized grade A milk, live cultures (L. bulgaricus, S. thermophilus), sugar, natural strawberry flavor, pectin.",
+      "expectedIngredients": ["milk", "live cultures", "sugar", "natural strawberry flavor", "pectin"]
+    },
+    {
+      "name": "Crackers",
+      "filename": "crackers-label.jpg",
+      "mockOCRText": "INGREDIENTS: Enriched wheat flour (wheat flour, niacin, reduced iron, thiamine mononitrate, riboflavin, folic acid), vegetable oil, salt, yeast, malted barley flour.",
+      "expectedIngredients": ["wheat flour", "vegetable oil", "salt", "yeast", "malted barley flour"]
+    },
+    {
+      "name": "Juice Box",
+      "filename": "juice-label.jpg",
+      "mockOCRText": "INGREDIENTS: Apple juice from concentrate (water, apple juice concentrate), natural flavor, ascorbic acid (vitamin C).",
+      "expectedIngredients": ["apple juice concentrate", "water", "natural flavor", "vitamin c"]
+    }
+  ]
+}
