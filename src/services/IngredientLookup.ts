@@ -1,6 +1,7 @@
 import { IngredientData, OpenFoodFactsResponse, AIExplanationResponse } from '../utils/types';
 import { API_ENDPOINTS, CACHE_CONFIG } from '../utils/constants';
 import { CacheManager } from '../utils/cache';
+import { AIService } from './AIService';
 
 /**
  * Service for looking up ingredient information from OpenFoodFacts API
@@ -9,10 +10,12 @@ import { CacheManager } from '../utils/cache';
 export class IngredientLookup {
   private cache: CacheManager;
   private commonIngredients: Map<string, IngredientData>;
+  private aiService: AIService;
 
   constructor() {
     this.cache = CacheManager.getInstance();
     this.commonIngredients = new Map();
+    this.aiService = AIService.getInstance();
     this.initializeCommonIngredients();
   }
 
@@ -112,7 +115,7 @@ export class IngredientLookup {
 
     try {
       // Fallback to AI explanation
-      const aiData = await this.getAIExplanation(normalizedName);
+      const aiData = await this.aiService.getIngredientExplanation(normalizedName);
       this.cache.set(`ingredient:${normalizedName}`, aiData);
       return aiData;
     } catch (error) {
@@ -196,58 +199,7 @@ export class IngredientLookup {
     }
   }
 
-  /**
-   * Get AI explanation for unknown ingredients
-   */
-  private async getAIExplanation(ingredient: string): Promise<IngredientData> {
-    try {
-      // For now, we'll create a mock AI response since we don't have the actual AI service integrated
-      // In a real implementation, this would call the Kiro LLM service
-      
-      // Simulate AI processing delay
-      await new Promise(resolve => setTimeout(resolve, 500 + Math.random() * 1000));
 
-      // Generate a basic explanation based on common patterns
-      let explanation = `${ingredient} is a food ingredient`;
-      let nutritionScore = 50;
-      let healthImpact: 'positive' | 'neutral' | 'negative' = 'neutral';
-
-      // Simple heuristics for common ingredient patterns
-      if (ingredient.includes('acid') || ingredient.includes('preservative')) {
-        explanation = `${ingredient} is likely a preservative or acidifying agent used to maintain food quality and safety`;
-        nutritionScore = 60;
-        healthImpact = 'neutral';
-      } else if (ingredient.includes('color') || ingredient.includes('dye')) {
-        explanation = `${ingredient} is likely a coloring agent used for visual appeal`;
-        nutritionScore = 40;
-        healthImpact = 'neutral';
-      } else if (ingredient.includes('vitamin') || ingredient.includes('mineral')) {
-        explanation = `${ingredient} is likely a nutritional supplement added for health benefits`;
-        nutritionScore = 85;
-        healthImpact = 'positive';
-      } else if (ingredient.includes('extract') || ingredient.includes('natural')) {
-        explanation = `${ingredient} is likely a natural flavoring or extract`;
-        nutritionScore = 70;
-        healthImpact = 'neutral';
-      } else if (ingredient.includes('syrup') || ingredient.includes('sweetener')) {
-        explanation = `${ingredient} is likely a sweetening agent`;
-        nutritionScore = 35;
-        healthImpact = 'negative';
-      }
-
-      const aiData: IngredientData = {
-        name: ingredient,
-        source: 'ai',
-        nutritionScore,
-        explanation
-      };
-
-      return aiData;
-    } catch (error) {
-      console.error('AI explanation error:', error);
-      throw error;
-    }
-  }
 
   /**
    * Batch lookup multiple ingredients
