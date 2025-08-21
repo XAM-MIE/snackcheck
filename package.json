@@ -8,7 +8,10 @@
     "start": "next start",
     "lint": "next lint",
     "test": "vitest",
-    "test:run": "vitest run"
+    "test:run": "vitest run",
+    "test:performance": "vitest run src/test/performance.test.ts",
+    "analyze": "ANALYZE=true npm run build",
+    "build:production": "NODE_ENV=production npm run build"
   },
   "dependencies": {
     "next": "15.4.7",

@@ -14,6 +14,7 @@ import {
 } from '../services';
 import { OCRResult, IngredientData, HealthScore, ProcessingProgress } from '../utils/types';
 import { SnackCheckError, ErrorReporter } from '../utils/errorHandling';
+import { PerformanceMonitor, MemoryManager } from '../utils/performance';
 
 // Error boundary component
 interface ErrorBoundaryState {
@@ -94,6 +95,9 @@ const SnackCheckApp: React.FC = () => {
 
   // Enhanced image capture handler with comprehensive error handling
   const handleImageCapture = useCallback(async (imageData: string) => {
+    const performanceMonitor = PerformanceMonitor.getInstance();
+    performanceMonitor.startTiming('scanToResult');
+    
     try {
       clearError();
       setCurrentError(null);
@@ -152,6 +156,7 @@ const SnackCheckApp: React.FC = () => {
         timeElapsed: getProcessingTime()
       });
 
+      performanceMonitor.startTiming('ingredientLookupBatch');
       const ingredientPromises = ocrResult.ingredients.map(async (ingredient, index) => {
         try {
           const result = await ingredientLookup.lookupIngredient(ingredient);
@@ -179,6 +184,7 @@ const SnackCheckApp: React.FC = () => {
       });
 
       const ingredients: IngredientData[] = await Promise.all(ingredientPromises);
+      performanceMonitor.endTiming('ingredientLookupBatch');
 
       // Step 3: Health Score Calculation
       setProcessingProgress({
@@ -201,9 +207,11 @@ const SnackCheckApp: React.FC = () => {
       completeAnalysis(ingredients, healthScore);
 
       // Performance check and feedback
-      const totalTime = getProcessingTime();
+      const totalTime = performanceMonitor.endTiming('scanToResult');
+      const memoryUsage = performanceMonitor.getMemoryUsage();
+      
       if (totalTime > 5000) {
-        console.warn(`Processing took ${totalTime}ms, exceeding 5s target`);
+        console.warn(`Processing took ${totalTime.toFixed(2)}ms, exceeding 5s target`);
         setToastMessage({
           message: `Analysis completed in ${(totalTime / 1000).toFixed(1)}s (slower than target)`,
           type: 'warning'
@@ -213,6 +221,14 @@ const SnackCheckApp: React.FC = () => {
           message: `Analysis completed in ${(totalTime / 1000).toFixed(1)}s`,
           type: 'success'
         });
+      }
+
+      // Log performance metrics
+      console.log('Performance Report:', performanceMonitor.generateReport());
+      
+      if (memoryUsage && memoryUsage.percentage > 80) {
+        console.warn('High memory usage detected:', memoryUsage);
+        MemoryManager.cleanup();
       }
 
       setProcessingProgress(null);

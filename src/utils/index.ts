@@ -2,3 +2,6 @@
 export * from './cache';
 export * from './constants';
 export * from './types';
+export * from './performance';
+export * from './imageOptimization';
+export * from './mobileOptimizations';

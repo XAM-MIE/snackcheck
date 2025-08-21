@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { MobileOptimizationProvider } from "../components/MobileOptimizationProvider";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -45,11 +46,41 @@ export default function RootLayout({
         <meta name="apple-mobile-web-app-status-bar-style" content="default" />
         <meta name="apple-mobile-web-app-title" content="SnackCheck" />
         <link rel="apple-touch-icon" href="/icon-192x192.png" />
+        
+        {/* Performance optimizations */}
+        <link rel="preconnect" href="https://world.openfoodfacts.org" />
+        <link rel="dns-prefetch" href="https://world.openfoodfacts.org" />
+        
+        {/* Critical CSS for mobile performance */}
+        <style dangerouslySetInnerHTML={{
+          __html: `
+            .touch-optimized {
+              touch-action: manipulation;
+              -webkit-tap-highlight-color: transparent;
+            }
+            .scroll-optimized {
+              -webkit-overflow-scrolling: touch;
+              overflow-scrolling: touch;
+            }
+            .low-performance * {
+              transition: none !important;
+              animation: none !important;
+            }
+            @media (max-width: 768px) {
+              body {
+                -webkit-text-size-adjust: 100%;
+                -ms-text-size-adjust: 100%;
+              }
+            }
+          `
+        }} />
       </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        {children}
+        <MobileOptimizationProvider>
+          {children}
+        </MobileOptimizationProvider>
       </body>
     </html>
   );

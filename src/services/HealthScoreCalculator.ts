@@ -1,5 +1,6 @@
 import { HealthScore, ScoreFactor, IngredientData } from '../utils/types';
 import { HEALTH_SCORE_THRESHOLDS } from '../utils/constants';
+import { PerformanceMonitor } from '../utils/performance';
 
 /**
  * HealthScoreCalculator service for calculating health scores based on ingredient data
@@ -121,6 +122,9 @@ export class HealthScoreCalculator {
    * Calculate health score for a list of ingredients
    */
   public calculateScore(ingredients: IngredientData[]): HealthScore {
+    const performanceMonitor = PerformanceMonitor.getInstance();
+    performanceMonitor.startTiming('healthCalculation');
+    
     let score = HealthScoreCalculator.BASE_SCORE;
     const factors: ScoreFactor[] = [];
 
@@ -137,11 +141,14 @@ export class HealthScoreCalculator {
     // Ensure score stays within bounds
     score = Math.max(0, Math.min(100, score));
 
-    return {
+    const result = {
       overall: Math.round(score),
       color: this.getColorCode(score),
       factors,
     };
+
+    performanceMonitor.endTiming('healthCalculation');
+    return result;
   }
 
   /**

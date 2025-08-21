@@ -61,7 +61,7 @@ export async function withRetry<T>(
   config: RetryConfig = { maxAttempts: 3, delayMs: 1000, backoffMultiplier: 2 },
   errorType: ErrorType = 'unknown_error'
 ): Promise<T> {
-  let lastError: Error;
+  let lastError: Error | undefined;
   
   for (let attempt = 1; attempt <= config.maxAttempts; attempt++) {
     try {
@@ -82,7 +82,7 @@ export async function withRetry<T>(
   throw new SnackCheckError(
     errorType,
     createErrorMessage(errorType),
-    lastError.message,
+    lastError?.message || 'Unknown error occurred',
     true
   );
 }

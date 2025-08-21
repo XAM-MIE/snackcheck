@@ -1,6 +1,8 @@
 import { createWorker, Worker } from 'tesseract.js';
 import { OCRResult } from '../utils/types';
 import { SnackCheckError, withRetry, withTimeout, ErrorRecovery } from '../utils/errorHandling';
+import { ImageOptimizer } from '../utils/imageOptimization';
+import { PerformanceMonitor } from '../utils/performance';
 
 export class OCRProcessor {
   private worker: Worker | null = null;
@@ -44,6 +46,9 @@ export class OCRProcessor {
    * Process an image and extract text using OCR with comprehensive error handling
    */
   async processImage(imageData: string): Promise<OCRResult> {
+    const performanceMonitor = PerformanceMonitor.getInstance();
+    performanceMonitor.startTiming('ocrProcessing');
+    
     try {
       // Validate input
       if (!imageData || !imageData.startsWith('data:image/')) {
@@ -54,6 +59,16 @@ export class OCRProcessor {
           false
         );
       }
+
+      // Optimize image for better OCR performance
+      performanceMonitor.startTiming('imageOptimization');
+      const optimizedImage = await ImageOptimizer.optimizeForOCR(imageData, {
+        maxWidth: 1200,
+        maxHeight: 1600,
+        quality: 0.9,
+        enablePreprocessing: true,
+      });
+      performanceMonitor.endTiming('imageOptimization');
 
       await this.initializeWorker();
       
@@ -66,10 +81,10 @@ export class OCRProcessor {
         );
       }
 
-      // Process with timeout (30 seconds max)
+      // Process with timeout (reduced to 20 seconds due to optimization)
       const { data } = await withTimeout(
-        this.worker.recognize(imageData),
-        30000,
+        this.worker.recognize(optimizedImage),
+        20000,
         'processing_timeout'
       );
 
@@ -107,12 +122,16 @@ export class OCRProcessor {
         );
       }
 
-      return {
+      const result = {
         text: extractedText,
         confidence,
         ingredients
       };
+
+      performanceMonitor.endTiming('ocrProcessing');
+      return result;
     } catch (error) {
+      performanceMonitor.endTiming('ocrProcessing');
       console.error('OCR processing failed:', error);
       
       // Re-throw SnackCheckError instances

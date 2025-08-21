@@ -1,4 +1,5 @@
 import '@testing-library/jest-dom'
+import { vi } from 'vitest'
 
 // Mock MediaDevices API for testing
 Object.defineProperty(global.navigator, 'mediaDevices', {
@@ -42,7 +43,7 @@ global.FileReader = class {
     setTimeout(() => {
       this.result = 'data:image/jpeg;base64,mock-file-data'
       if (this.onload) {
-        this.onload({ target: this } as ProgressEvent<FileReader>)
+        this.onload({ target: this } as unknown as ProgressEvent<FileReader>)
       }
     }, 0)
   }

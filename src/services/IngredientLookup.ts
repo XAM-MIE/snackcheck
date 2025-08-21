@@ -3,6 +3,7 @@ import { API_ENDPOINTS, CACHE_CONFIG } from '../utils/constants';
 import { CacheManager } from '../utils/cache';
 import { AIService } from './AIService';
 import { SnackCheckError, withRetry, withTimeout, safeAsync } from '../utils/errorHandling';
+import { PerformanceMonitor } from '../utils/performance';
 
 /**
  * Service for looking up ingredient information from OpenFoodFacts API
@@ -89,9 +90,13 @@ export class IngredientLookup {
    * Look up ingredient information from various sources with enhanced error handling
    */
   async lookupIngredient(name: string): Promise<IngredientData> {
+    const performanceMonitor = PerformanceMonitor.getInstance();
+    performanceMonitor.startTiming('ingredientLookup');
+    
     const normalizedName = name.toLowerCase().trim();
     
     if (!normalizedName) {
+      performanceMonitor.endTiming('ingredientLookup');
       throw new SnackCheckError(
         'unknown_error',
         'Invalid ingredient name provided',
@@ -103,57 +108,67 @@ export class IngredientLookup {
     // Check cache first
     const cached = this.cache.get(`ingredient:${normalizedName}`) as IngredientData;
     if (cached) {
+      performanceMonitor.endTiming('ingredientLookup');
       return cached;
     }
 
     // Check common ingredients
     const common = this.commonIngredients.get(normalizedName);
     if (common) {
+      performanceMonitor.endTiming('ingredientLookup');
       return common;
     }
 
-    // Try OpenFoodFacts API with error handling
-    const openFoodFactsData = await safeAsync(
-      () => withTimeout(
-        this.queryOpenFoodFacts(normalizedName),
-        10000, // 10 second timeout
-        'api_timeout'
-      ),
-      null,
-      'api_unavailable'
-    );
+    try {
+      // Try OpenFoodFacts API with error handling
+      const openFoodFactsData = await safeAsync(
+        () => withTimeout(
+          this.queryOpenFoodFacts(normalizedName),
+          8000, // Reduced timeout for better performance
+          'api_timeout'
+        ),
+        null,
+        'api_unavailable'
+      );
 
-    if (openFoodFactsData) {
-      this.cache.set(`ingredient:${normalizedName}`, openFoodFactsData);
-      return openFoodFactsData;
+      if (openFoodFactsData) {
+        this.cache.set(`ingredient:${normalizedName}`, openFoodFactsData);
+        performanceMonitor.endTiming('ingredientLookup');
+        return openFoodFactsData;
+      }
+
+      // Fallback to AI explanation with error handling
+      const aiData = await safeAsync(
+        () => withTimeout(
+          this.aiService.getIngredientExplanation(normalizedName),
+          10000, // Reduced timeout for AI
+          'api_timeout'
+        ),
+        null,
+        'api_unavailable'
+      );
+
+      if (aiData) {
+        this.cache.set(`ingredient:${normalizedName}`, aiData);
+        performanceMonitor.endTiming('ingredientLookup');
+        return aiData;
+      }
+
+      // Final fallback - unknown ingredient
+      const fallbackData: IngredientData = {
+        name: normalizedName,
+        source: 'cache',
+        nutritionScore: 50, // Neutral score
+        explanation: 'Unknown ingredient - unable to retrieve detailed information. This may be due to network issues or the ingredient not being in our database.'
+      };
+
+      this.cache.set(`ingredient:${normalizedName}`, fallbackData);
+      performanceMonitor.endTiming('ingredientLookup');
+      return fallbackData;
+    } catch (error) {
+      performanceMonitor.endTiming('ingredientLookup');
+      throw error;
     }
-
-    // Fallback to AI explanation with error handling
-    const aiData = await safeAsync(
-      () => withTimeout(
-        this.aiService.getIngredientExplanation(normalizedName),
-        15000, // 15 second timeout for AI
-        'api_timeout'
-      ),
-      null,
-      'api_unavailable'
-    );
-
-    if (aiData) {
-      this.cache.set(`ingredient:${normalizedName}`, aiData);
-      return aiData;
-    }
-
-    // Final fallback - unknown ingredient
-    const fallbackData: IngredientData = {
-      name: normalizedName,
-      source: 'cache',
-      nutritionScore: 50, // Neutral score
-      explanation: 'Unknown ingredient - unable to retrieve detailed information. This may be due to network issues or the ingredient not being in our database.'
-    };
-
-    this.cache.set(`ingredient:${normalizedName}`, fallbackData);
-    return fallbackData;
   }
 
   /**
