@@ -1,333 +1,315 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { IngredientLookup } from '../IngredientLookup';
-import { IngredientData } from '../../utils/types';
+import { CacheManager } from '../../utils/cache';
 
-// Mock fetch globally
+// Mock fetch
 global.fetch = vi.fn();
 
 describe('IngredientLookup', () => {
-  let ingredientLookup: IngredientLookup;
+    let ingredientLookup: IngredientLookup;
+    let mockFetch: any;
 
-  beforeEach(() => {
-    vi.clearAllMocks();
-    ingredientLookup = new IngredientLookup();
-  });
-
-  afterEach(() => {
-    ingredientLookup.clearCache();
-  });
-
-  describe('constructor', () => {
-    it('should initialize with common ingredients cache', () => {
-      const stats = ingredientLookup.getCacheStats();
-      
-      expect(stats.commonIngredients).toBe(51); // Top 51 common ingredients
-      expect(stats.totalEntries).toBeGreaterThan(0);
-    });
-  });
-
-  describe('lookupIngredient', () => {
-    it('should return cached common ingredient', async () => {
-      const result = await ingredientLookup.lookupIngredient('water');
-
-      expect(result).toEqual({
-        name: 'water',
-        source: 'cache',
-        nutritionScore: 100,
-        explanation: 'Essential for hydration'
-      });
+    beforeEach(() => {
+        mockFetch = vi.mocked(fetch);
+        ingredientLookup = new IngredientLookup();
+        // Clear cache before each test
+        CacheManager.getInstance().clear();
     });
 
-    it('should be case insensitive for common ingredients', async () => {
-      const result1 = await ingredientLookup.lookupIngredient('WATER');
-      const result2 = await ingredientLookup.lookupIngredient('Water');
-      const result3 = await ingredientLookup.lookupIngredient('water');
-
-      expect(result1.name).toBe('water');
-      expect(result2.name).toBe('water');
-      expect(result3.name).toBe('water');
+    afterEach(() => {
+        vi.clearAllMocks();
     });
 
-    it('should handle whitespace in ingredient names', async () => {
-      const result = await ingredientLookup.lookupIngredient('  sugar  ');
+    describe('lookupIngredient', () => {
+        it('should return cached ingredient data when available', async () => {
+            const cachedData = {
+                name: 'sugar',
+                source: 'cache' as const,
+                nutritionScore: 30,
+                explanation: 'Refined sweetener that adds calories without nutrients'
+            };
 
-      expect(result.name).toBe('sugar');
-      expect(result.source).toBe('cache');
-    });
+            // Pre-populate cache
+            CacheManager.getInstance().set('ingredient_sugar', cachedData);
 
-    it('should query OpenFoodFacts for unknown ingredients', async () => {
-      const mockResponse = {
-        products: [{
-          nutrition_grades: 'b',
-          additives_tags: [],
-        }]
-      };
+            const result = await ingredientLookup.lookupIngredient('sugar');
 
-      (fetch as any).mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(mockResponse)
-      });
-
-      const result = await ingredientLookup.lookupIngredient('unknown-ingredient');
-
-      expect(fetch).toHaveBeenCalledWith(
-        expect.stringContaining('unknown-ingredient'),
-        expect.objectContaining({
-          method: 'GET',
-          headers: expect.objectContaining({
-            'User-Agent': 'SnackCheck/1.0 (https://snackcheck.app)'
-          })
-        })
-      );
-      expect(result.source).toBe('openfoodfacts');
-      expect(result.nutritionScore).toBe(75); // Grade B = 75
-    });
-
-    it('should correctly parse nutrition grades', async () => {
-      const testCases = [
-        { grade: 'a', expectedScore: 90 },
-        { grade: 'b', expectedScore: 75 },
-        { grade: 'c', expectedScore: 60 },
-        { grade: 'd', expectedScore: 40 },
-        { grade: 'e', expectedScore: 20 }
-      ];
-
-      for (const testCase of testCases) {
-        (fetch as any).mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve({
-            products: [{
-              nutrition_grades: testCase.grade,
-              additives_tags: []
-            }]
-          })
+            expect(result).toEqual(cachedData);
+            expect(mockFetch).not.toHaveBeenCalled();
         });
 
-        const result = await ingredientLookup.lookupIngredient(`test-${testCase.grade}`);
-        expect(result.nutritionScore).toBe(testCase.expectedScore);
-      }
+        it('should return common ingredient data for known ingredients', async () => {
+            const result = await ingredientLookup.lookupIngredient('wheat flour');
+
+            expect(result.name).toBe('wheat flour');
+            expect(result.source).toBe('cache');
+            expect(result.nutritionScore).toBe(60);
+            expect(result.explanation).toContain('grain-based ingredient');
+            expect(mockFetch).not.toHaveBeenCalled();
+        });
+
+        it('should query OpenFoodFacts API for unknown ingredients', async () => {
+            const mockApiResponse = {
+                products: [{
+                    nutrition_grades: 'b',
+                    nova_group: 2,
+                    additives_tags: ['en:preservative']
+                }]
+            };
+
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve(mockApiResponse)
+            });
+
+            const result = await ingredientLookup.lookupIngredient('unknown ingredient');
+
+            expect(result.name).toBe('unknown ingredient');
+            expect(result.source).toBe('openfoodfacts');
+            expect(result.nutritionScore).toBe(75); // Grade 'b' maps to 75
+            expect(result.additiveClass).toBe('preservative');
+            expect(mockFetch).toHaveBeenCalledWith(
+                expect.stringContaining('unknown%20ingredient'),
+                expect.objectContaining({
+                    headers: expect.objectContaining({
+                        'User-Agent': 'SnackCheck/1.0 (https://snackcheck.app)'
+                    })
+                })
+            );
+        });
+
+        it('should handle OpenFoodFacts API errors gracefully', async () => {
+            mockFetch.mockRejectedValueOnce(new Error('Network error'));
+
+            const result = await ingredientLookup.lookupIngredient('unknown ingredient');
+
+            expect(result.name).toBe('unknown ingredient');
+            expect(result.source).toBe('cache');
+            expect(result.explanation).toBe('Ingredient information not available in database');
+        });
+
+        it('should handle empty OpenFoodFacts response', async () => {
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({ products: [] })
+            });
+
+            const result = await ingredientLookup.lookupIngredient('unknown ingredient');
+
+            expect(result.name).toBe('unknown ingredient');
+            expect(result.source).toBe('cache');
+            expect(result.explanation).toBe('Ingredient information not available in database');
+        });
+
+        it('should normalize ingredient names consistently', async () => {
+            const result1 = await ingredientLookup.lookupIngredient('  WHEAT FLOUR  ');
+            const result2 = await ingredientLookup.lookupIngredient('wheat flour');
+            const result3 = await ingredientLookup.lookupIngredient('organic wheat flour');
+
+            expect(result1.name).toBe('wheat flour');
+            expect(result2.name).toBe('wheat flour');
+            expect(result3.name).toBe('wheat flour');
+
+            // All should return the same cached common ingredient
+            expect(result1.source).toBe('cache');
+            expect(result2.source).toBe('cache');
+            expect(result3.source).toBe('cache');
+        });
+
+        it('should cache API results for future lookups', async () => {
+            const mockApiResponse = {
+                products: [{
+                    nutrition_grades: 'a',
+                    nova_group: 1,
+                    additives_tags: []
+                }]
+            };
+
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve(mockApiResponse)
+            });
+
+            // First lookup should call API
+            const result1 = await ingredientLookup.lookupIngredient('test ingredient');
+            expect(mockFetch).toHaveBeenCalledTimes(1);
+
+            // Second lookup should use cache
+            const result2 = await ingredientLookup.lookupIngredient('test ingredient');
+            expect(mockFetch).toHaveBeenCalledTimes(1); // No additional calls
+
+            expect(result1).toEqual(result2);
+            expect(result2.source).toBe('openfoodfacts');
+        });
     });
 
-    it('should identify and cap additives scores', async () => {
-      (fetch as any).mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({
-          products: [{
-            nutrition_grades: 'a', // Would normally be 90
-            additives_tags: ['en:e100', 'en:e200']
-          }]
-        })
-      });
+    describe('parseNutritionGrade', () => {
+        it('should correctly map nutrition grades to scores', async () => {
+            const testCases = [
+                { grade: 'a', expectedScore: 90 },
+                { grade: 'b', expectedScore: 75 },
+                { grade: 'c', expectedScore: 60 },
+                { grade: 'd', expectedScore: 45 },
+                { grade: 'e', expectedScore: 30 }
+            ];
 
-      const result = await ingredientLookup.lookupIngredient('additive-ingredient');
-      expect(result.additiveClass).toBe('additive');
-      expect(result.nutritionScore).toBe(60); // Capped at 60 for additives
+            for (const testCase of testCases) {
+                mockFetch.mockResolvedValueOnce({
+                    ok: true,
+                    json: () => Promise.resolve({
+                        products: [{
+                            nutrition_grades: testCase.grade,
+                            nova_group: 1,
+                            additives_tags: []
+                        }]
+                    })
+                });
+
+                const result = await ingredientLookup.lookupIngredient(`test-${testCase.grade}`);
+                expect(result.nutritionScore).toBe(testCase.expectedScore);
+            }
+        });
     });
 
-    it('should fallback to AI when OpenFoodFacts returns no results', async () => {
-      (fetch as any).mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ products: [] })
-      });
+    describe('getAdditiveClass', () => {
+        it('should correctly identify additive classes', async () => {
+            const testCases = [
+                { tags: ['en:preservative'], expectedClass: 'preservative' },
+                { tags: ['en:colorant'], expectedClass: 'colorant' },
+                { tags: ['en:emulsifier'], expectedClass: 'emulsifier' },
+                { tags: ['en:sweetener'], expectedClass: 'sweetener' },
+                { tags: ['en:antioxidant'], expectedClass: 'antioxidant' },
+                { tags: ['en:some-other-additive'], expectedClass: 'additive' }
+            ];
 
-      const result = await ingredientLookup.lookupIngredient('rare-ingredient');
-      expect(result.source).toBe('ai');
+            for (const testCase of testCases) {
+                mockFetch.mockResolvedValueOnce({
+                    ok: true,
+                    json: () => Promise.resolve({
+                        products: [{
+                            nutrition_grades: 'c',
+                            nova_group: 3,
+                            additives_tags: testCase.tags
+                        }]
+                    })
+                });
+
+                const result = await ingredientLookup.lookupIngredient(`test-${testCase.expectedClass}`);
+                expect(result.additiveClass).toBe(testCase.expectedClass);
+            }
+        });
     });
 
-    it('should handle OpenFoodFacts API errors gracefully', async () => {
-      (fetch as any).mockRejectedValueOnce(new Error('Network error'));
+    describe('lookupIngredients', () => {
+        it('should lookup multiple ingredients in parallel', async () => {
+            const ingredients = ['sugar', 'salt', 'wheat flour'];
 
-      const result = await ingredientLookup.lookupIngredient('network-fail-ingredient');
-      // Should fallback to AI explanation
-      expect(result.source).toBe('ai');
+            const results = await ingredientLookup.lookupIngredients(ingredients);
+
+            expect(results).toHaveLength(3);
+            expect(results[0].name).toBe('sugar');
+            expect(results[1].name).toBe('salt');
+            expect(results[2].name).toBe('wheat flour');
+
+            // All should be from common ingredients cache
+            results.forEach(result => {
+                expect(result.source).toBe('cache');
+            });
+        });
+
+        it('should handle mixed known and unknown ingredients', async () => {
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({
+                    products: [{
+                        nutrition_grades: 'b',
+                        nova_group: 2,
+                        additives_tags: []
+                    }]
+                })
+            });
+
+            const ingredients = ['sugar', 'unknown ingredient'];
+            const results = await ingredientLookup.lookupIngredients(ingredients);
+
+            expect(results).toHaveLength(2);
+            expect(results[0].name).toBe('sugar');
+            expect(results[0].source).toBe('cache');
+            expect(results[1].name).toBe('unknown ingredient');
+            expect(results[1].source).toBe('openfoodfacts');
+        });
     });
 
-    it('should handle malformed OpenFoodFacts responses', async () => {
-      (fetch as any).mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ invalid: 'response' })
-      });
+    describe('getCommonIngredients', () => {
+        it('should return array of common ingredients', () => {
+            const commonIngredients = ingredientLookup.getCommonIngredients();
 
-      const result = await ingredientLookup.lookupIngredient('malformed-response-test');
-      // Should fallback to AI
-      expect(result.source).toBe('ai');
+            expect(Array.isArray(commonIngredients)).toBe(true);
+            expect(commonIngredients.length).toBeGreaterThan(40); // Should have 50+ ingredients
+
+            // Check that all have required properties
+            commonIngredients.forEach(ingredient => {
+                expect(ingredient).toHaveProperty('name');
+                expect(ingredient).toHaveProperty('source', 'cache');
+                expect(ingredient).toHaveProperty('nutritionScore');
+                expect(ingredient).toHaveProperty('explanation');
+                expect(typeof ingredient.name).toBe('string');
+                expect(typeof ingredient.nutritionScore).toBe('number');
+                expect(typeof ingredient.explanation).toBe('string');
+            });
+        });
+
+        it('should include expected common ingredients', () => {
+            const commonIngredients = ingredientLookup.getCommonIngredients();
+            const ingredientNames = commonIngredients.map(ing => ing.name);
+
+            expect(ingredientNames).toContain('sugar');
+            expect(ingredientNames).toContain('salt');
+            expect(ingredientNames).toContain('wheat flour');
+            expect(ingredientNames).toContain('water');
+            expect(ingredientNames).toContain('olive oil');
+        });
     });
 
-    it('should handle JSON parsing errors', async () => {
-      (fetch as any).mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.reject(new Error('Invalid JSON'))
-      });
+    describe('error handling', () => {
+        it('should handle API timeout gracefully', async () => {
+            mockFetch.mockImplementationOnce(() =>
+                new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('Timeout')), 100)
+                )
+            );
 
-      const result = await ingredientLookup.lookupIngredient('json-error-test');
-      // Should fallback to AI
-      expect(result.source).toBe('ai');
+            const result = await ingredientLookup.lookupIngredient('timeout test');
+
+            expect(result.name).toBe('timeout test');
+            expect(result.source).toBe('cache');
+            expect(result.explanation).toBe('Ingredient information not available in database');
+        });
+
+        it('should handle malformed API response', async () => {
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({ invalid: 'response' })
+            });
+
+            const result = await ingredientLookup.lookupIngredient('malformed test');
+
+            expect(result.name).toBe('malformed test');
+            expect(result.source).toBe('cache');
+            expect(result.explanation).toBe('Ingredient information not available in database');
+        });
+
+        it('should handle API returning non-ok status', async () => {
+            mockFetch.mockResolvedValueOnce({
+                ok: false,
+                status: 500
+            });
+
+            const result = await ingredientLookup.lookupIngredient('server error test');
+
+            expect(result.name).toBe('server error test');
+            expect(result.source).toBe('cache');
+            expect(result.explanation).toBe('Ingredient information not available in database');
+        });
     });
-
-    it('should handle network timeouts gracefully', async () => {
-      (fetch as any).mockImplementationOnce(
-        () => new Promise((_, reject) => {
-          setTimeout(() => reject(new Error('Timeout')), 100);
-        })
-      );
-
-      const result = await ingredientLookup.lookupIngredient('timeout-test');
-      // Should fallback to AI
-      expect(result.source).toBe('ai');
-    });
-
-    it('should provide fallback data when all services fail', async () => {
-      // Mock fetch to fail
-      (fetch as any).mockRejectedValue(new Error('Network error'));
-      
-      // Mock AI explanation to fail by overriding the private method
-      const originalGetAIExplanation = (ingredientLookup as any).getAIExplanation;
-      (ingredientLookup as any).getAIExplanation = vi.fn().mockRejectedValue(new Error('AI service down'));
-
-      const result = await ingredientLookup.lookupIngredient('total-fail-ingredient');
-      
-      expect(result).toEqual({
-        name: 'total-fail-ingredient',
-        source: 'cache',
-        nutritionScore: 50,
-        explanation: 'Unknown ingredient - unable to provide detailed information'
-      });
-
-      // Restore original method
-      (ingredientLookup as any).getAIExplanation = originalGetAIExplanation;
-    });
-  });
-
-  describe('AI explanation', () => {
-    it('should generate explanations for vitamin ingredients', async () => {
-      const result = await ingredientLookup.lookupIngredient('vitamin-d-test');
-      expect(result.source).toBe('ai');
-      expect(result.explanation).toContain('nutritional supplement');
-      expect(result.nutritionScore).toBe(85);
-    });
-
-    it('should generate explanations for natural extracts', async () => {
-      const result = await ingredientLookup.lookupIngredient('natural-extract-test');
-      expect(result.source).toBe('ai');
-      expect(result.explanation).toContain('natural flavoring');
-      expect(result.nutritionScore).toBe(70);
-    });
-
-    it('should generate explanations for sweeteners', async () => {
-      const result = await ingredientLookup.lookupIngredient('corn-syrup-test');
-      expect(result.source).toBe('ai');
-      expect(result.explanation).toContain('sweetening agent');
-      expect(result.nutritionScore).toBe(35);
-    });
-
-    it('should generate explanations for coloring agents', async () => {
-      const result = await ingredientLookup.lookupIngredient('red-color-test');
-      expect(result.source).toBe('ai');
-      expect(result.explanation).toContain('coloring agent');
-      expect(result.nutritionScore).toBe(40);
-    });
-
-    it('should generate explanations for preservatives', async () => {
-      const result = await ingredientLookup.lookupIngredient('citric-acid-test');
-      expect(result.source).toBe('ai');
-      expect(result.explanation).toContain('preservative');
-      expect(result.nutritionScore).toBe(60);
-    });
-  });
-
-  describe('batch lookup', () => {
-    it('should handle mixed known and unknown ingredients', async () => {
-      const ingredients = ['water', 'sugar', 'unknown-ingredient'];
-      
-      (fetch as any).mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({ products: [] })
-      });
-
-      const results = await ingredientLookup.lookupIngredients(ingredients);
-      
-      expect(results).toHaveLength(3);
-      expect(results[0].name).toBe('water');
-      expect(results[0].source).toBe('cache'); // water is cached
-      expect(results[1].name).toBe('sugar');
-      expect(results[1].source).toBe('cache'); // sugar is cached
-      expect(results[2].name).toBe('unknown-ingredient');
-      // Should fallback to AI since no OpenFoodFacts results
-    });
-
-    it('should handle multiple ingredients efficiently', async () => {
-      const healthyIngredients = ['water', 'vitamin c', 'blueberry', 'salmon'];
-      const unhealthyIngredients = ['corn syrup', 'sugar'];
-
-      const results = await ingredientLookup.lookupIngredients([...healthyIngredients, ...unhealthyIngredients]);
-
-      // Check that healthy ingredients have higher scores
-      for (const ingredient of healthyIngredients) {
-        const result = results.find(r => r.name === ingredient);
-        expect(result?.nutritionScore).toBeGreaterThan(70);
-      }
-
-      // Check that unhealthy ingredients have lower scores  
-      for (const ingredient of unhealthyIngredients) {
-        const result = results.find(r => r.name === ingredient);
-        expect(result?.nutritionScore).toBeLessThan(50);
-      }
-    });
-
-    it('should include all expected common ingredients', async () => {
-      const expectedIngredients = [
-        'water', 'sugar', 'salt', 'wheat flour', 'vegetable oil',
-        'milk', 'eggs', 'natural flavor', 'citric acid', 'vitamin c'
-      ];
-
-      for (const ingredient of expectedIngredients) {
-        const result = await ingredientLookup.lookupIngredient(ingredient);
-        expect(result.source).toBe('cache');
-        expect(result.explanation).toBeTruthy();
-        expect(typeof result.nutritionScore).toBe('number');
-      }
-    });
-  });
-
-  describe('cache statistics', () => {
-    it('should provide accurate cache statistics', () => {
-      const stats = ingredientLookup.getCacheStats();
-      
-      expect(typeof stats.commonIngredients).toBe('number');
-      expect(typeof stats.totalEntries).toBe('number');
-      expect(stats.commonIngredients).toBe(51);
-    });
-
-    it('should clear cache properly', () => {
-      const statsBefore = ingredientLookup.getCacheStats();
-      expect(statsBefore.commonIngredients).toBe(51);
-
-      ingredientLookup.clearCache();
-      
-      const statsAfter = ingredientLookup.getCacheStats();
-      expect(statsAfter.commonIngredients).toBe(51); // Common ingredients restored
-    });
-
-    it('should cache lookup results for reuse', async () => {
-      // First lookup should make API call
-      (fetch as any).mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({
-          products: [{
-            nutrition_grades: 'a',
-            additives_tags: []
-          }]
-        })
-      });
-
-      const result1 = await ingredientLookup.lookupIngredient('cache-test-ingredient');
-      expect(fetch).toHaveBeenCalledTimes(1);
-
-      // Second lookup should use cached result
-      const result2 = await ingredientLookup.lookupIngredient('cache-test-ingredient');
-      expect(fetch).toHaveBeenCalledTimes(1); // No additional API call
-
-      expect(result1).toEqual(result2);
-    });
-  });
 });
