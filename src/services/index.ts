@@ -3,3 +3,4 @@ export { OCRProcessor } from './OCRProcessor';
 export { DemoService } from './DemoService';
 export { IngredientLookup } from './IngredientLookup';
 export { AIService } from './AIService';
+export { HealthScoreCalculator } from './HealthScoreCalculator';

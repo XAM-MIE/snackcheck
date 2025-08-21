@@ -31,7 +31,12 @@
   - Write unit tests for camera functionality
   - _Requirements: 1.1, 1.2, 5.2_
 
-- [ ] 3. Build OCR processing service
+- [x] 3. Build OCR processing service
+
+
+
+
+
 
 
 
@@ -81,7 +86,12 @@
   - Write unit tests for AI integration
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5_
 
-- [ ] 6. Implement health scoring algorithm
+- [x] 6. Implement health scoring algorithm
+
+
+
+
+
   - Create HealthScoreCalculator service class
   - Build scoring algorithm with weighted deductions and bonuses
   - Implement color coding logic (Green/Yellow/Red) based on score thresholds
