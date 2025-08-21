@@ -2,6 +2,7 @@ import { IngredientData, OpenFoodFactsResponse, AIExplanationResponse } from '..
 import { API_ENDPOINTS, CACHE_CONFIG } from '../utils/constants';
 import { CacheManager } from '../utils/cache';
 import { AIService } from './AIService';
+import { SnackCheckError, withRetry, withTimeout, safeAsync } from '../utils/errorHandling';
 
 /**
  * Service for looking up ingredient information from OpenFoodFacts API
@@ -85,10 +86,19 @@ export class IngredientLookup {
   }
 
   /**
-   * Look up ingredient information from various sources
+   * Look up ingredient information from various sources with enhanced error handling
    */
   async lookupIngredient(name: string): Promise<IngredientData> {
     const normalizedName = name.toLowerCase().trim();
+    
+    if (!normalizedName) {
+      throw new SnackCheckError(
+        'unknown_error',
+        'Invalid ingredient name provided',
+        'Ingredient name is empty or invalid',
+        false
+      );
+    }
     
     // Check cache first
     const cached = this.cache.get(`ingredient:${normalizedName}`) as IngredientData;
@@ -102,24 +112,36 @@ export class IngredientLookup {
       return common;
     }
 
-    try {
-      // Try OpenFoodFacts API
-      const openFoodFactsData = await this.queryOpenFoodFacts(normalizedName);
-      if (openFoodFactsData) {
-        this.cache.set(`ingredient:${normalizedName}`, openFoodFactsData);
-        return openFoodFactsData;
-      }
-    } catch (error) {
-      console.warn(`OpenFoodFacts lookup failed for ${name}:`, error);
+    // Try OpenFoodFacts API with error handling
+    const openFoodFactsData = await safeAsync(
+      () => withTimeout(
+        this.queryOpenFoodFacts(normalizedName),
+        10000, // 10 second timeout
+        'api_timeout'
+      ),
+      null,
+      'api_unavailable'
+    );
+
+    if (openFoodFactsData) {
+      this.cache.set(`ingredient:${normalizedName}`, openFoodFactsData);
+      return openFoodFactsData;
     }
 
-    try {
-      // Fallback to AI explanation
-      const aiData = await this.aiService.getIngredientExplanation(normalizedName);
+    // Fallback to AI explanation with error handling
+    const aiData = await safeAsync(
+      () => withTimeout(
+        this.aiService.getIngredientExplanation(normalizedName),
+        15000, // 15 second timeout for AI
+        'api_timeout'
+      ),
+      null,
+      'api_unavailable'
+    );
+
+    if (aiData) {
       this.cache.set(`ingredient:${normalizedName}`, aiData);
       return aiData;
-    } catch (error) {
-      console.warn(`AI explanation failed for ${name}:`, error);
     }
 
     // Final fallback - unknown ingredient
@@ -127,7 +149,7 @@ export class IngredientLookup {
       name: normalizedName,
       source: 'cache',
       nutritionScore: 50, // Neutral score
-      explanation: 'Unknown ingredient - unable to provide detailed information'
+      explanation: 'Unknown ingredient - unable to retrieve detailed information. This may be due to network issues or the ingredient not being in our database.'
     };
 
     this.cache.set(`ingredient:${normalizedName}`, fallbackData);
@@ -135,7 +157,7 @@ export class IngredientLookup {
   }
 
   /**
-   * Query OpenFoodFacts API for ingredient information
+   * Query OpenFoodFacts API for ingredient information with enhanced error handling
    */
   private async queryOpenFoodFacts(ingredient: string): Promise<IngredientData | null> {
     try {
@@ -143,16 +165,47 @@ export class IngredientLookup {
       // a search for products containing this ingredient and extract data
       const searchUrl = `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(ingredient)}&search_simple=1&action=process&json=1`;
       
-      const response = await fetch(searchUrl, {
-        method: 'GET',
-        headers: {
-          'User-Agent': 'SnackCheck/1.0 (https://snackcheck.app)'
-        }
-      });
+      const response = await withRetry(
+        async () => {
+          const res = await fetch(searchUrl, {
+            method: 'GET',
+            headers: {
+              'User-Agent': 'SnackCheck/1.0 (https://snackcheck.app)',
+              'Accept': 'application/json',
+            },
+            signal: AbortSignal.timeout(8000) // 8 second timeout per request
+          });
 
-      if (!response.ok) {
-        throw new Error(`OpenFoodFacts API error: ${response.status}`);
-      }
+          if (!res.ok) {
+            if (res.status >= 500) {
+              throw new SnackCheckError(
+                'api_unavailable',
+                'OpenFoodFacts service is temporarily unavailable',
+                `HTTP ${res.status}: ${res.statusText}`,
+                true
+              );
+            } else if (res.status === 429) {
+              throw new SnackCheckError(
+                'api_timeout',
+                'Too many requests to OpenFoodFacts API',
+                'Rate limit exceeded',
+                true
+              );
+            } else {
+              throw new SnackCheckError(
+                'api_unavailable',
+                'OpenFoodFacts API request failed',
+                `HTTP ${res.status}: ${res.statusText}`,
+                false
+              );
+            }
+          }
+
+          return res;
+        },
+        { maxAttempts: 2, delayMs: 1000, backoffMultiplier: 2 },
+        'api_unavailable'
+      );
 
       const data = await response.json();
       
@@ -195,7 +248,28 @@ export class IngredientLookup {
       return null;
     } catch (error) {
       console.error('OpenFoodFacts query error:', error);
-      return null;
+      
+      if (error instanceof SnackCheckError) {
+        throw error;
+      }
+      
+      // Handle network errors
+      if (error instanceof TypeError && error.message.includes('fetch')) {
+        throw new SnackCheckError(
+          'network_error',
+          'Network error while accessing ingredient database',
+          error.message,
+          true
+        );
+      }
+      
+      // Generic API error
+      throw new SnackCheckError(
+        'api_unavailable',
+        'Failed to query OpenFoodFacts database',
+        error instanceof Error ? error.message : String(error),
+        true
+      );
     }
   }
 

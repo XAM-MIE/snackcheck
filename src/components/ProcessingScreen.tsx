@@ -1,15 +1,18 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import { ProcessingProgress } from '../utils/types';
 
 interface ProcessingScreenProps {
   processingTime: number;
   onTimeout?: () => void;
+  progress?: ProcessingProgress | null;
 }
 
 const ProcessingScreen: React.FC<ProcessingScreenProps> = ({ 
   processingTime, 
-  onTimeout 
+  onTimeout,
+  progress 
 }) => {
   const [currentStep, setCurrentStep] = useState(0);
   const [timeoutWarning, setTimeoutWarning] = useState(false);
@@ -49,7 +52,7 @@ const ProcessingScreen: React.FC<ProcessingScreenProps> = ({
     }
   }, [processingTime, timeoutWarning, onTimeout]);
 
-  const progressPercentage = Math.min((processingTime / 5000) * 100, 100);
+  const progressPercentage = progress?.progress || Math.min((processingTime / 5000) * 100, 100);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
@@ -75,7 +78,7 @@ const ProcessingScreen: React.FC<ProcessingScreenProps> = ({
             Analyzing Your Food
           </h2>
           <p className="text-gray-600 animate-pulse">
-            {steps[currentStep]?.label || 'Processing...'}
+            {progress?.message || steps[currentStep]?.label || 'Processing...'}
           </p>
         </div>
 

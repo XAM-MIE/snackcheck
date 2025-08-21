@@ -1,12 +1,13 @@
 import { createWorker, Worker } from 'tesseract.js';
 import { OCRResult } from '../utils/types';
+import { SnackCheckError, withRetry, withTimeout, ErrorRecovery } from '../utils/errorHandling';
 
 export class OCRProcessor {
   private worker: Worker | null = null;
   private isInitialized = false;
 
   /**
-   * Initialize the Tesseract worker
+   * Initialize the Tesseract worker with retry logic
    */
   private async initializeWorker(): Promise<void> {
     if (this.isInitialized && this.worker) {
@@ -14,31 +15,97 @@ export class OCRProcessor {
     }
 
     try {
-      this.worker = await createWorker('eng');
+      // Use retry mechanism for worker initialization
+      this.worker = await withRetry(
+        async () => {
+          const worker = await createWorker('eng');
+          // Test the worker with a simple operation
+          await worker.recognize('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==');
+          return worker;
+        },
+        { maxAttempts: 3, delayMs: 1000, backoffMultiplier: 2 },
+        'ocr_failure'
+      );
+      
       this.isInitialized = true;
     } catch (error) {
       console.error('Failed to initialize OCR worker:', error);
-      throw new Error('OCR initialization failed');
+      await ErrorRecovery.recoverFromOCRFailure();
+      throw new SnackCheckError(
+        'ocr_failure',
+        'Failed to initialize text recognition. Please refresh the page and try again.',
+        error instanceof Error ? error.message : String(error),
+        true
+      );
     }
   }
 
   /**
-   * Process an image and extract text using OCR
+   * Process an image and extract text using OCR with comprehensive error handling
    */
   async processImage(imageData: string): Promise<OCRResult> {
     try {
+      // Validate input
+      if (!imageData || !imageData.startsWith('data:image/')) {
+        throw new SnackCheckError(
+          'ocr_failure',
+          'Invalid image data provided',
+          'Image data must be a valid data URL',
+          false
+        );
+      }
+
       await this.initializeWorker();
       
       if (!this.worker) {
-        throw new Error('OCR worker not initialized');
+        throw new SnackCheckError(
+          'ocr_failure',
+          'OCR worker not available',
+          'Worker initialization succeeded but worker is null',
+          true
+        );
       }
 
-      const { data } = await this.worker.recognize(imageData);
-      const extractedText = data.text;
-      const confidence = data.confidence;
+      // Process with timeout (30 seconds max)
+      const { data } = await withTimeout(
+        this.worker.recognize(imageData),
+        30000,
+        'processing_timeout'
+      );
+
+      const extractedText = data.text?.trim() || '';
+      const confidence = data.confidence / 100; // Normalize to 0-1
+
+      // Validate OCR results
+      if (!extractedText) {
+        throw new SnackCheckError(
+          'ocr_failure',
+          'No text could be extracted from the image',
+          'OCR returned empty text',
+          true
+        );
+      }
+
+      if (confidence < 0.3) {
+        throw new SnackCheckError(
+          'ocr_low_confidence',
+          'Image quality is too low for accurate text recognition',
+          `Confidence: ${(confidence * 100).toFixed(1)}%`,
+          true
+        );
+      }
 
       // Parse ingredients from the extracted text
       const ingredients = this.parseIngredients(extractedText);
+
+      if (ingredients.length === 0) {
+        throw new SnackCheckError(
+          'ocr_failure',
+          'No ingredients could be identified in the text',
+          `Extracted text: "${extractedText.substring(0, 100)}..."`,
+          true
+        );
+      }
 
       return {
         text: extractedText,
@@ -47,11 +114,40 @@ export class OCRProcessor {
       };
     } catch (error) {
       console.error('OCR processing failed:', error);
-      // Re-throw the original error if it's an initialization error
-      if (error instanceof Error && error.message === 'OCR initialization failed') {
+      
+      // Re-throw SnackCheckError instances
+      if (error instanceof SnackCheckError) {
         throw error;
       }
-      throw new Error('Failed to process image with OCR');
+      
+      // Handle other errors
+      if (error instanceof Error) {
+        if (error.message.includes('timeout')) {
+          throw new SnackCheckError(
+            'processing_timeout',
+            'Text recognition is taking too long',
+            error.message,
+            true
+          );
+        }
+        
+        if (error.message.includes('network') || error.message.includes('fetch')) {
+          throw new SnackCheckError(
+            'network_error',
+            'Network error during text recognition',
+            error.message,
+            true
+          );
+        }
+      }
+      
+      // Generic OCR failure
+      throw new SnackCheckError(
+        'ocr_failure',
+        'Failed to process image with text recognition',
+        error instanceof Error ? error.message : String(error),
+        true
+      );
     }
   }
 
@@ -133,7 +229,7 @@ export class OCRProcessor {
       .concat(parentheticalIngredients) // Add parenthetical ingredients
       .map(ingredient => {
         // Clean up common OCR artifacts
-        let cleaned = ingredient
+        const cleaned = ingredient
           .replace(/[[\]{}]/g, '') // Remove brackets
           .replace(/\s+/g, ' ') // Normalize spaces
           .replace(/^[^a-zA-Z]+/, '') // Remove leading non-letters

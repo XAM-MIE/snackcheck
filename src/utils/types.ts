@@ -62,3 +62,36 @@ export interface AIExplanationResponse {
   healthImpact: 'positive' | 'neutral' | 'negative';
   commonUses: string[];
 }
+
+// Error handling types
+export type ErrorType = 
+  | 'ocr_failure'
+  | 'ocr_low_confidence'
+  | 'api_timeout'
+  | 'api_unavailable'
+  | 'network_error'
+  | 'processing_timeout'
+  | 'camera_permission'
+  | 'camera_not_supported'
+  | 'unknown_error';
+
+export interface AppError {
+  type: ErrorType;
+  message: string;
+  details?: string;
+  retryable: boolean;
+  timestamp: Date;
+}
+
+export interface RetryConfig {
+  maxAttempts: number;
+  delayMs: number;
+  backoffMultiplier: number;
+}
+
+export interface ProcessingProgress {
+  stage: 'ocr' | 'ingredient_lookup' | 'health_calculation' | 'complete';
+  progress: number; // 0-100
+  message: string;
+  timeElapsed: number;
+}

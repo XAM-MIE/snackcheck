@@ -1,17 +1,19 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useApp } from '../contexts/AppContext';
 import CameraCapture from './CameraCapture';
 import ProcessingScreen from './ProcessingScreen';
 import ResultsDisplay from './ResultsDisplay';
+import { ErrorDisplay, ToastNotification } from './UserFeedback';
 import { 
   OCRProcessor, 
   IngredientLookup, 
   HealthScoreCalculator,
   DemoService 
 } from '../services';
-import { OCRResult, IngredientData, HealthScore } from '../utils/types';
+import { OCRResult, IngredientData, HealthScore, ProcessingProgress } from '../utils/types';
+import { SnackCheckError, ErrorReporter } from '../utils/errorHandling';
 
 // Error boundary component
 interface ErrorBoundaryState {
@@ -79,46 +81,99 @@ const SnackCheckApp: React.FC = () => {
     getProcessingTime,
   } = useApp();
 
+  // Enhanced state for error handling and progress tracking
+  const [currentError, setCurrentError] = useState<SnackCheckError | null>(null);
+  const [processingProgress, setProcessingProgress] = useState<ProcessingProgress | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
+  const [toastMessage, setToastMessage] = useState<{ message: string; type: 'success' | 'error' | 'warning' | 'info' } | null>(null);
+
   // Initialize services (memoized to prevent recreation on every render)
   const ocrProcessor = useMemo(() => new OCRProcessor(), []);
   const ingredientLookup = useMemo(() => new IngredientLookup(), []);
   const healthCalculator = useMemo(() => new HealthScoreCalculator(), []);
 
-  // Handle image capture from camera
+  // Enhanced image capture handler with comprehensive error handling
   const handleImageCapture = useCallback(async (imageData: string) => {
     try {
       clearError();
+      setCurrentError(null);
+      setRetryCount(0);
       startProcessing(imageData);
 
       // Step 1: OCR Processing
+      setProcessingProgress({
+        stage: 'ocr',
+        progress: 10,
+        message: 'Extracting text from image...',
+        timeElapsed: getProcessingTime()
+      });
+
       let ocrResult: OCRResult;
       try {
         ocrResult = await ocrProcessor.processImage(imageData);
         
-        // If OCR confidence is too low, try demo fallback
-        if (ocrResult.confidence < 0.6 || ocrResult.ingredients.length === 0) {
-          console.warn('Low OCR confidence, using demo fallback');
-          ocrResult = await DemoService.simulateOCRProcessing();
-        }
+        setProcessingProgress({
+          stage: 'ocr',
+          progress: 30,
+          message: 'Text extraction complete',
+          timeElapsed: getProcessingTime()
+        });
         
         completeOCR(ocrResult);
       } catch (ocrError) {
-        console.error('OCR failed, using demo fallback:', ocrError);
-        ocrResult = await DemoService.simulateOCRProcessing();
-        completeOCR(ocrResult);
+        console.error('OCR failed:', ocrError);
+        
+        if (ocrError instanceof SnackCheckError) {
+          // For retryable OCR errors, try demo fallback
+          if (ocrError.retryable) {
+            console.warn('OCR failed, using demo fallback');
+            setToastMessage({
+              message: 'Using demo data due to image processing issues',
+              type: 'warning'
+            });
+            ocrResult = await DemoService.simulateOCRProcessing();
+            completeOCR(ocrResult);
+          } else {
+            throw ocrError;
+          }
+        } else {
+          // Unexpected error, use demo fallback
+          console.warn('Unexpected OCR error, using demo fallback');
+          ocrResult = await DemoService.simulateOCRProcessing();
+          completeOCR(ocrResult);
+        }
       }
 
       // Step 2: Ingredient Lookup
-      const ingredientPromises = ocrResult.ingredients.map(async (ingredient) => {
+      setProcessingProgress({
+        stage: 'ingredient_lookup',
+        progress: 50,
+        message: 'Looking up ingredient information...',
+        timeElapsed: getProcessingTime()
+      });
+
+      const ingredientPromises = ocrResult.ingredients.map(async (ingredient, index) => {
         try {
-          return await ingredientLookup.lookupIngredient(ingredient);
+          const result = await ingredientLookup.lookupIngredient(ingredient);
+          
+          // Update progress for each ingredient
+          const progressIncrement = 30 / ocrResult.ingredients.length;
+          setProcessingProgress(prev => prev ? {
+            ...prev,
+            progress: Math.min(50 + (index + 1) * progressIncrement, 80),
+            message: `Analyzed ${index + 1}/${ocrResult.ingredients.length} ingredients`
+          } : null);
+          
+          return result;
         } catch (error) {
           console.error(`Failed to lookup ingredient ${ingredient}:`, error);
-          // Return basic ingredient data as fallback
+          
+          // Return fallback ingredient data
           return {
             name: ingredient,
             source: 'cache' as const,
-            explanation: 'Unable to retrieve detailed information for this ingredient.',
+            nutritionScore: 50,
+            explanation: 'Unable to retrieve detailed information for this ingredient due to lookup failure.',
           };
         }
       });
@@ -126,24 +181,64 @@ const SnackCheckApp: React.FC = () => {
       const ingredients: IngredientData[] = await Promise.all(ingredientPromises);
 
       // Step 3: Health Score Calculation
+      setProcessingProgress({
+        stage: 'health_calculation',
+        progress: 90,
+        message: 'Calculating health score...',
+        timeElapsed: getProcessingTime()
+      });
+
       const healthScore: HealthScore = healthCalculator.calculateScore(ingredients);
 
       // Complete the analysis
+      setProcessingProgress({
+        stage: 'complete',
+        progress: 100,
+        message: 'Analysis complete!',
+        timeElapsed: getProcessingTime()
+      });
+
       completeAnalysis(ingredients, healthScore);
 
-      // Performance check - warn if over 5 seconds
+      // Performance check and feedback
       const totalTime = getProcessingTime();
       if (totalTime > 5000) {
         console.warn(`Processing took ${totalTime}ms, exceeding 5s target`);
+        setToastMessage({
+          message: `Analysis completed in ${(totalTime / 1000).toFixed(1)}s (slower than target)`,
+          type: 'warning'
+        });
+      } else {
+        setToastMessage({
+          message: `Analysis completed in ${(totalTime / 1000).toFixed(1)}s`,
+          type: 'success'
+        });
       }
+
+      setProcessingProgress(null);
 
     } catch (error) {
       console.error('Processing error:', error);
-      setError(
-        error instanceof Error 
-          ? `Processing failed: ${error.message}` 
-          : 'An unexpected error occurred during processing'
-      );
+      
+      let snackCheckError: SnackCheckError;
+      
+      if (error instanceof SnackCheckError) {
+        snackCheckError = error;
+      } else {
+        snackCheckError = new SnackCheckError(
+          'unknown_error',
+          'An unexpected error occurred during processing',
+          error instanceof Error ? error.message : String(error),
+          true
+        );
+      }
+      
+      // Report error for analytics
+      ErrorReporter.reportError(snackCheckError.toAppError());
+      
+      setCurrentError(snackCheckError);
+      setError(snackCheckError.message);
+      setProcessingProgress(null);
     }
   }, [
     clearError,
@@ -157,10 +252,42 @@ const SnackCheckApp: React.FC = () => {
     healthCalculator,
   ]);
 
-  // Handle processing timeout
+  // Handle processing timeout with retry logic
   const handleProcessingTimeout = useCallback(() => {
-    setError('Processing is taking longer than expected. This might be due to image quality or network conditions. Please try again with a clearer image.');
-  }, [setError]);
+    const timeoutError = new SnackCheckError(
+      'processing_timeout',
+      'Processing is taking longer than expected. This might be due to image quality or network conditions.',
+      `Timeout after ${getProcessingTime()}ms`,
+      true
+    );
+    
+    setCurrentError(timeoutError);
+    setError(timeoutError.message);
+    ErrorReporter.reportError(timeoutError.toAppError());
+  }, [setError, getProcessingTime]);
+
+  // Retry functionality
+  const handleRetry = useCallback(() => {
+    if (!state.currentSession?.imageData) {
+      resetSession();
+      return;
+    }
+
+    setRetryCount(prev => prev + 1);
+    setCurrentError(null);
+    clearError();
+    
+    // Add a small delay before retry to prevent rapid retries
+    setTimeout(() => {
+      handleImageCapture(state.currentSession!.imageData);
+    }, 1000);
+  }, [state.currentSession?.imageData, resetSession, clearError, handleImageCapture]);
+
+  // Enhanced error dismissal
+  const handleErrorDismiss = useCallback(() => {
+    setCurrentError(null);
+    clearError();
+  }, [clearError]);
 
   // Handle sharing results
   const handleShare = useCallback(async () => {
@@ -252,27 +379,23 @@ const SnackCheckApp: React.FC = () => {
               </div>
             </div>
 
-            {/* Error display */}
-            {state.error && (
+            {/* Enhanced error display */}
+            {currentError && (
               <div className="p-4">
-                <div className="max-w-md mx-auto bg-red-50 border border-red-200 rounded-lg p-4">
-                  <div className="flex items-start space-x-3">
-                    <span className="text-red-500 text-xl">⚠️</span>
-                    <div className="flex-1">
-                      <p className="text-sm font-medium text-red-800 mb-1">
-                        Error
+                <div className="max-w-md mx-auto">
+                  <ErrorDisplay
+                    error={currentError.toAppError()}
+                    onRetry={currentError.retryable ? handleRetry : undefined}
+                    onDismiss={handleErrorDismiss}
+                  />
+                  
+                  {retryCount > 0 && (
+                    <div className="mt-2 text-center">
+                      <p className="text-xs text-gray-500">
+                        Retry attempt: {retryCount}
                       </p>
-                      <p className="text-sm text-red-600">
-                        {state.error}
-                      </p>
-                      <button
-                        onClick={clearError}
-                        className="mt-2 text-xs text-red-700 hover:text-red-800 underline"
-                      >
-                        Dismiss
-                      </button>
                     </div>
-                  </div>
+                  )}
                 </div>
               </div>
             )}
@@ -284,6 +407,7 @@ const SnackCheckApp: React.FC = () => {
           <ProcessingScreen
             processingTime={getProcessingTime()}
             onTimeout={handleProcessingTimeout}
+            progress={processingProgress}
           />
         );
 
@@ -313,6 +437,15 @@ const SnackCheckApp: React.FC = () => {
     <ErrorBoundary onError={handleAppError}>
       <div className="min-h-screen">
         {renderCurrentScreen()}
+        
+        {/* Toast notifications */}
+        {toastMessage && (
+          <ToastNotification
+            message={toastMessage.message}
+            type={toastMessage.type}
+            onClose={() => setToastMessage(null)}
+          />
+        )}
       </div>
     </ErrorBoundary>
   );
