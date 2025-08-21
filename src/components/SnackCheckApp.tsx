@@ -1,469 +1,382 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { useApp } from '../contexts/AppContext';
-import CameraCapture from './CameraCapture';
-import ProcessingScreen from './ProcessingScreen';
+import React, { useState, useCallback, useEffect } from 'react';
+import { User, Scan, Home as HomeIcon } from 'lucide-react';
+import { BottomNavbar } from './BottomNavbar';
+import { FoodHistory } from './FoodHistory';
+import { CameraCapture } from './CameraCapture';
 import ResultsDisplay from './ResultsDisplay';
-import { ErrorDisplay, ToastNotification } from './UserFeedback';
-import { 
-  OCRProcessor, 
-  IngredientLookup, 
-  HealthScoreCalculator,
-  DemoService 
-} from '../services';
-import { OCRResult, IngredientData, HealthScore, ProcessingProgress } from '../utils/types';
-import { SnackCheckError, ErrorReporter } from '../utils/errorHandling';
-import { PerformanceMonitor, MemoryManager } from '../utils/performance';
+import LoadingScreen from './LoadingScreen';
+import { OCRProcessor } from '../services/OCRProcessor';
+import { IngredientLookup } from '../services/IngredientLookup';
+import { HealthScoreCalculator } from '../services/HealthScoreCalculator';
+import { DemoService } from '../services/DemoService';
+import { OCRResult, IngredientData, HealthScore, ScanSession } from '../utils/types';
 
-// Error boundary component
-interface ErrorBoundaryState {
-  hasError: boolean;
-  error?: Error;
-}
+type AppState = 'home' | 'scan' | 'processing' | 'results';
+type TabState = 'home' | 'scan' | 'upload';
 
-interface ErrorBoundaryProps {
-  children: React.ReactNode;
-  onError?: (error: Error) => void;
-}
+export const SnackCheckApp: React.FC = () => {
+  const [appState, setAppState] = useState<AppState>('home');
+  const [activeTab, setActiveTab] = useState<TabState>('home');
+  const [scanSession, setScanSession] = useState<ScanSession | null>(null);
+  const [scanHistory, setScanHistory] = useState<ScanSession[]>([]);
+  const [processingStep, setProcessingStep] = useState<string>('');
+  const [error, setError] = useState<string | null>(null);
 
-class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
-  constructor(props: ErrorBoundaryProps) {
-    super(props);
-    this.state = { hasError: false };
-  }
+  // Initialize services
+  const ocrProcessor = new OCRProcessor();
+  const ingredientLookup = new IngredientLookup();
+  const healthCalculator = new HealthScoreCalculator();
 
-  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
-    return { hasError: true, error };
-  }
-
-  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
-    console.error('SnackCheck Error:', error, errorInfo);
-    this.props.onError?.(error);
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div className="min-h-screen bg-gradient-to-br from-red-50 to-red-100 flex items-center justify-center p-4">
-          <div className="max-w-md w-full text-center">
-            <div className="text-6xl mb-4">😵</div>
-            <h2 className="text-xl font-bold text-red-800 mb-2">
-              Oops! Something went wrong
-            </h2>
-            <p className="text-red-600 mb-4">
-              We encountered an unexpected error. Please refresh the page to try again.
-            </p>
-            <button
-              onClick={() => window.location.reload()}
-              className="bg-red-600 text-white px-6 py-2 rounded-lg hover:bg-red-700 transition-colors"
-            >
-              Refresh Page
-            </button>
-          </div>
-        </div>
-      );
-    }
-
-    return this.props.children;
-  }
-}
-
-// Main app component
-const SnackCheckApp: React.FC = () => {
-  const {
-    state,
-    startProcessing,
-    completeOCR,
-    completeAnalysis,
-    setError,
-    resetSession,
-    clearError,
-    getProcessingTime,
-  } = useApp();
-
-  // Enhanced state for error handling and progress tracking
-  const [currentError, setCurrentError] = useState<SnackCheckError | null>(null);
-  const [processingProgress, setProcessingProgress] = useState<ProcessingProgress | null>(null);
-  const [retryCount, setRetryCount] = useState(0);
-  const [toastMessage, setToastMessage] = useState<{ message: string; type: 'success' | 'error' | 'warning' | 'info' } | null>(null);
-
-  // Initialize services (memoized to prevent recreation on every render)
-  const ocrProcessor = useMemo(() => new OCRProcessor(), []);
-  const ingredientLookup = useMemo(() => new IngredientLookup(), []);
-  const healthCalculator = useMemo(() => new HealthScoreCalculator(), []);
-
-  // Enhanced image capture handler with comprehensive error handling
-  const handleImageCapture = useCallback(async (imageData: string) => {
-    const performanceMonitor = PerformanceMonitor.getInstance();
-    performanceMonitor.startTiming('scanToResult');
-    
-    try {
-      clearError();
-      setCurrentError(null);
-      setRetryCount(0);
-      startProcessing(imageData);
-
-      // Step 1: OCR Processing
-      setProcessingProgress({
-        stage: 'ocr',
-        progress: 10,
-        message: 'Extracting text from image...',
-        timeElapsed: getProcessingTime()
-      });
-
-      let ocrResult: OCRResult;
+  // Load scan history from localStorage on mount
+  useEffect(() => {
+    const loadScanHistory = () => {
       try {
-        ocrResult = await ocrProcessor.processImage(imageData);
-        
-        setProcessingProgress({
-          stage: 'ocr',
-          progress: 30,
-          message: 'Text extraction complete',
-          timeElapsed: getProcessingTime()
-        });
-        
-        completeOCR(ocrResult);
-      } catch (ocrError) {
-        console.error('OCR failed:', ocrError);
-        
-        if (ocrError instanceof SnackCheckError) {
-          // For retryable OCR errors, try demo fallback
-          if (ocrError.retryable) {
-            console.warn('OCR failed, using demo fallback');
-            setToastMessage({
-              message: 'Using demo data due to image processing issues',
-              type: 'warning'
-            });
+        const stored = localStorage.getItem('snackcheck_scan_history');
+        if (stored) {
+          const history = JSON.parse(stored).map((item: unknown) => ({
+            ...item,
+            timestamp: new Date(item.timestamp)
+          }));
+          setScanHistory(history);
+        }
+      } catch (error) {
+        console.error('Failed to load scan history:', error);
+      }
+    };
+
+    loadScanHistory();
+  }, []);
+
+  // Save scan to history
+  const saveScanToHistory = useCallback((session: ScanSession) => {
+    try {
+      const updatedHistory = [session, ...scanHistory].slice(0, 50); // Keep last 50 scans
+      setScanHistory(updatedHistory);
+      localStorage.setItem('snackcheck_scan_history', JSON.stringify(updatedHistory));
+    } catch (error) {
+      console.error('Failed to save scan to history:', error);
+    }
+  }, [scanHistory]);
+
+  // Handle image capture
+  const handleImageCapture = useCallback(async (imageData: string) => {
+    const startTime = Date.now();
+    setAppState('processing');
+    setError(null);
+
+    try {
+      // Step 1: OCR Processing
+      setProcessingStep('Extracting text from image...');
+      let ocrResult: OCRResult;
+
+      // Use demo mode if enabled or OCR fails
+      if (DemoService.shouldUseDemoMode()) {
+        ocrResult = await DemoService.simulateOCRProcessing();
+      } else {
+        try {
+          ocrResult = await ocrProcessor.processImage(imageData);
+
+          // If OCR confidence is too low, fall back to demo
+          if (ocrResult.confidence < 60) {
+            console.warn('OCR confidence too low, using demo data');
             ocrResult = await DemoService.simulateOCRProcessing();
-            completeOCR(ocrResult);
-          } else {
-            throw ocrError;
           }
-        } else {
-          // Unexpected error, use demo fallback
-          console.warn('Unexpected OCR error, using demo fallback');
+        } catch (ocrError) {
+          console.warn('OCR failed, using demo data:', ocrError);
           ocrResult = await DemoService.simulateOCRProcessing();
-          completeOCR(ocrResult);
         }
       }
 
       // Step 2: Ingredient Lookup
-      setProcessingProgress({
-        stage: 'ingredient_lookup',
-        progress: 50,
-        message: 'Looking up ingredient information...',
-        timeElapsed: getProcessingTime()
-      });
-
-      performanceMonitor.startTiming('ingredientLookupBatch');
-      const ingredientPromises = ocrResult.ingredients.map(async (ingredient, index) => {
-        try {
-          const result = await ingredientLookup.lookupIngredient(ingredient);
-          
-          // Update progress for each ingredient
-          const progressIncrement = 30 / ocrResult.ingredients.length;
-          setProcessingProgress(prev => prev ? {
-            ...prev,
-            progress: Math.min(50 + (index + 1) * progressIncrement, 80),
-            message: `Analyzed ${index + 1}/${ocrResult.ingredients.length} ingredients`
-          } : null);
-          
-          return result;
-        } catch (error) {
-          console.error(`Failed to lookup ingredient ${ingredient}:`, error);
-          
-          // Return fallback ingredient data
-          return {
-            name: ingredient,
-            source: 'cache' as const,
-            nutritionScore: 50,
-            explanation: 'Unable to retrieve detailed information for this ingredient due to lookup failure.',
-          };
-        }
-      });
-
-      const ingredients: IngredientData[] = await Promise.all(ingredientPromises);
-      performanceMonitor.endTiming('ingredientLookupBatch');
+      setProcessingStep('Looking up ingredient information...');
+      const ingredients: IngredientData[] = await ingredientLookup.lookupIngredients(ocrResult.ingredients);
 
       // Step 3: Health Score Calculation
-      setProcessingProgress({
-        stage: 'health_calculation',
-        progress: 90,
-        message: 'Calculating health score...',
-        timeElapsed: getProcessingTime()
-      });
-
+      setProcessingStep('Calculating health score...');
       const healthScore: HealthScore = healthCalculator.calculateScore(ingredients);
 
-      // Complete the analysis
-      setProcessingProgress({
-        stage: 'complete',
-        progress: 100,
-        message: 'Analysis complete!',
-        timeElapsed: getProcessingTime()
-      });
+      const processingTime = Date.now() - startTime;
 
-      completeAnalysis(ingredients, healthScore);
+      // Create scan session
+      const session: ScanSession = {
+        id: `scan_${Date.now()}`,
+        timestamp: new Date(),
+        imageData,
+        ocrResult,
+        ingredients,
+        healthScore,
+        processingTime
+      };
 
-      // Performance check and feedback
-      const totalTime = performanceMonitor.endTiming('scanToResult');
-      const memoryUsage = performanceMonitor.getMemoryUsage();
-      
-      if (totalTime > 5000) {
-        console.warn(`Processing took ${totalTime.toFixed(2)}ms, exceeding 5s target`);
-        setToastMessage({
-          message: `Analysis completed in ${(totalTime / 1000).toFixed(1)}s (slower than target)`,
-          type: 'warning'
-        });
-      } else {
-        setToastMessage({
-          message: `Analysis completed in ${(totalTime / 1000).toFixed(1)}s`,
-          type: 'success'
-        });
-      }
-
-      // Log performance metrics
-      console.log('Performance Report:', performanceMonitor.generateReport());
-      
-      if (memoryUsage && memoryUsage.percentage > 80) {
-        console.warn('High memory usage detected:', memoryUsage);
-        MemoryManager.cleanup();
-      }
-
-      setProcessingProgress(null);
+      setScanSession(session);
+      saveScanToHistory(session);
+      setAppState('results');
 
     } catch (error) {
-      console.error('Processing error:', error);
-      
-      let snackCheckError: SnackCheckError;
-      
-      if (error instanceof SnackCheckError) {
-        snackCheckError = error;
-      } else {
-        snackCheckError = new SnackCheckError(
-          'unknown_error',
-          'An unexpected error occurred during processing',
-          error instanceof Error ? error.message : String(error),
-          true
-        );
-      }
-      
-      // Report error for analytics
-      ErrorReporter.reportError(snackCheckError.toAppError());
-      
-      setCurrentError(snackCheckError);
-      setError(snackCheckError.message);
-      setProcessingProgress(null);
+      console.error('Processing failed:', error);
+      setError(error instanceof Error ? error.message : 'Processing failed. Please try again.');
+      setAppState('home');
     }
-  }, [
-    clearError,
-    startProcessing,
-    completeOCR,
-    completeAnalysis,
-    setError,
-    getProcessingTime,
-    ocrProcessor,
-    ingredientLookup,
-    healthCalculator,
-  ]);
+  }, [ocrProcessor, ingredientLookup, healthCalculator, saveScanToHistory]);
 
-  // Handle processing timeout with retry logic
-  const handleProcessingTimeout = useCallback(() => {
-    const timeoutError = new SnackCheckError(
-      'processing_timeout',
-      'Processing is taking longer than expected. This might be due to image quality or network conditions.',
-      `Timeout after ${getProcessingTime()}ms`,
-      true
-    );
-    
-    setCurrentError(timeoutError);
-    setError(timeoutError.message);
-    ErrorReporter.reportError(timeoutError.toAppError());
-  }, [setError, getProcessingTime]);
+  // Handle new scan
+  const handleNewScan = useCallback(() => {
+    setScanSession(null);
+    setError(null);
+    setAppState('home');
+    setActiveTab('home');
+  }, []);
 
-  // Retry functionality
-  const handleRetry = useCallback(() => {
-    if (!state.currentSession?.imageData) {
-      resetSession();
-      return;
-    }
+  // Handle share
+  const handleShare = useCallback(() => {
+    if (!scanSession) return;
 
-    setRetryCount(prev => prev + 1);
-    setCurrentError(null);
-    clearError();
-    
-    // Add a small delay before retry to prevent rapid retries
-    setTimeout(() => {
-      handleImageCapture(state.currentSession!.imageData);
-    }, 1000);
-  }, [state.currentSession?.imageData, resetSession, clearError, handleImageCapture]);
-
-  // Enhanced error dismissal
-  const handleErrorDismiss = useCallback(() => {
-    setCurrentError(null);
-    clearError();
-  }, [clearError]);
-
-  // Handle sharing results
-  const handleShare = useCallback(async () => {
-    if (!state.currentSession) return;
-
-    const { healthScore, ingredients } = state.currentSession;
-    const shareText = `SnackCheck Results: ${healthScore.overall}/100 (${healthScore.color.toUpperCase()}) - Analyzed ${ingredients.length} ingredients`;
+    const shareData = {
+      title: 'SnackCheck Results',
+      text: `Health Score: ${scanSession.healthScore.overall}/100 (${scanSession.healthScore.color.toUpperCase()})`,
+      url: window.location.href
+    };
 
     if (navigator.share) {
-      try {
-        await navigator.share({
-          title: 'SnackCheck Results',
-          text: shareText,
-          url: window.location.href,
-        });
-      } catch (error) {
-        // User cancelled sharing or sharing failed
-        console.log('Sharing cancelled or failed:', error);
-      }
+      navigator.share(shareData).catch(console.error);
     } else {
       // Fallback: copy to clipboard
-      try {
-        await navigator.clipboard.writeText(shareText);
-        // Could show a toast notification here
-        console.log('Results copied to clipboard');
-      } catch (error) {
-        console.error('Failed to copy to clipboard:', error);
-      }
+      navigator.clipboard.writeText(`${shareData.title}\n${shareData.text}\n${shareData.url}`)
+        .then(() => alert('Results copied to clipboard!'))
+        .catch(() => alert('Unable to share results'));
     }
-  }, [state.currentSession]);
+  }, [scanSession]);
 
-  // Performance monitoring
-  useEffect(() => {
-    if (state.currentSession?.processingTime) {
-      const time = state.currentSession.processingTime;
-      
-      // Log performance metrics
-      console.log(`Scan completed in ${time}ms`);
-      
-      // Track performance for analytics (if implemented)
-      if (typeof window !== 'undefined' && 'gtag' in window) {
-        const gtag = (window as { gtag?: (...args: unknown[]) => void }).gtag;
-        gtag?.('event', 'scan_completed', {
-          processing_time: time,
-          performance_category: time < 3000 ? 'excellent' : time < 5000 ? 'good' : 'slow',
-        });
-      }
+  // Handle tab changes
+  const handleTabChange = useCallback((tab: TabState) => {
+    setActiveTab(tab);
+    if (tab === 'home') {
+      setAppState('home');
+    } else if (tab === 'scan') {
+      setAppState('scan');
+    } else if (tab === 'upload') {
+      // Trigger file input for uploading
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*';
+      input.onchange = (e) => {
+        const file = (e.target as HTMLInputElement).files?.[0];
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = (event) => {
+            const imageData = event.target?.result as string;
+            handleImageCapture(imageData);
+          };
+          reader.readAsDataURL(file);
+        }
+      };
+      input.click();
     }
-  }, [state.currentSession?.processingTime]);
+  }, [handleImageCapture]);
 
-  // Error handling for app-level errors
-  const handleAppError = useCallback((error: Error) => {
-    setError(`Application error: ${error.message}`);
-  }, [setError]);
+  return (
+    <div className="min-h-screen bg-white">
+      {/* Mobile View */}
+      <div className="lg:hidden">
+        {/* Profile Icon */}
+        <div className="absolute top-4 right-4 z-10">
+          <button className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center">
+            <User className="w-6 h-6 text-gray-700" />
+          </button>
+        </div>
 
-  // Render current screen based on app state
-  const renderCurrentScreen = () => {
-    switch (state.currentScreen) {
-      case 'camera':
-        return (
-          <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex flex-col">
-            {/* Header */}
-            <div className="p-4 text-center">
-              <h1 className="text-3xl font-bold text-gray-800 mb-2">
-                SnackCheck
-              </h1>
+        {/* Content */}
+        {appState === 'home' && (
+          <>
+            <div className="px-4 sm:px-6 pt-8 pb-24">
+              {/* Welcome Message */}
+              <p className="text-gray-600 text-base mb-8 font-light">welcome back, User ⭐</p>
+
+              {/* Main Headline */}
+              <div className="mb-12">
+                <h1 className="text-4xl sm:text-5xl text-black leading-tight font-normal tracking-tight">
+                  Scan your<br />
+                  food<br />
+                  ingredients<br />
+                  with our AI
+                </h1>
+              </div>
+
+              {/* Section Divider */}
+              <div className="flex items-center mb-8">
+                <div className="flex-1 h-px bg-gray-200"></div>
+                <span className="px-4 text-gray-500 text-sm font-light">your recent scans</span>
+                <div className="flex-1 h-px bg-gray-200"></div>
+              </div>
+
+              {error && (
+                <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+                  <p className="text-red-700 text-sm">{error}</p>
+                </div>
+              )}
+            </div>
+
+            {/* Food History */}
+            <div className="px-4 sm:px-6 pb-6">
+              <FoodHistory scanHistory={scanHistory} />
+            </div>
+          </>
+        )}
+
+        {appState === 'scan' && (
+          <div className="px-4 sm:px-6 pt-8 pb-24">
+            <div className="text-center mb-6">
+              <h2 className="text-2xl font-bold text-gray-900 mb-2">
+                Scan Food Label
+              </h2>
               <p className="text-gray-600">
-                Scan food labels for instant health insights
+                Point your camera at the ingredients list
               </p>
             </div>
 
-            {/* Camera section */}
-            <div className="flex-1 flex items-center justify-center p-4">
-              <div className="w-full max-w-md">
-                <CameraCapture
-                  onImageCapture={handleImageCapture}
-                  isProcessing={state.isProcessing}
-                />
-                
-                {/* Instructions */}
-                <div className="mt-6 text-center">
-                  <p className="text-sm text-gray-600 mb-2">
-                    📱 Position the ingredient list in the frame
-                  </p>
-                  <p className="text-xs text-gray-500">
-                    Make sure the text is clear and well-lit for best results
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Enhanced error display */}
-            {currentError && (
-              <div className="p-4">
-                <div className="max-w-md mx-auto">
-                  <ErrorDisplay
-                    error={currentError.toAppError()}
-                    onRetry={currentError.retryable ? handleRetry : undefined}
-                    onDismiss={handleErrorDismiss}
-                  />
-                  
-                  {retryCount > 0 && (
-                    <div className="mt-2 text-center">
-                      <p className="text-xs text-gray-500">
-                        Retry attempt: {retryCount}
-                      </p>
-                    </div>
-                  )}
-                </div>
+            {error && (
+              <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+                <p className="text-red-700 text-sm">{error}</p>
               </div>
             )}
+
+            <CameraCapture
+              onImageCapture={handleImageCapture}
+              isProcessing={appState === 'processing'}
+            />
+
+            <div className="mt-6 text-center">
+              <p className="text-sm text-gray-500">
+                Make sure the ingredients list is clearly visible and well-lit
+              </p>
+            </div>
           </div>
-        );
-
-      case 'processing':
-        return (
-          <ProcessingScreen
-            processingTime={getProcessingTime()}
-            onTimeout={handleProcessingTimeout}
-            progress={processingProgress}
-          />
-        );
-
-      case 'results':
-        if (!state.currentSession) {
-          // Fallback if no session data
-          resetSession();
-          return null;
-        }
-
-        return (
-          <ResultsDisplay
-            score={state.currentSession.healthScore}
-            ingredients={state.currentSession.ingredients}
-            onNewScan={resetSession}
-            onShare={handleShare}
-            isLoading={state.isProcessing}
-          />
-        );
-
-      default:
-        return null;
-    }
-  };
-
-  return (
-    <ErrorBoundary onError={handleAppError}>
-      <div className="min-h-screen">
-        {renderCurrentScreen()}
-        
-        {/* Toast notifications */}
-        {toastMessage && (
-          <ToastNotification
-            message={toastMessage.message}
-            type={toastMessage.type}
-            onClose={() => setToastMessage(null)}
-          />
         )}
+
+        {appState === 'processing' && (
+          <div className="px-4 sm:px-6 pt-8">
+            <LoadingScreen step={processingStep} />
+          </div>
+        )}
+
+        {appState === 'results' && scanSession && (
+          <div className="px-4 sm:px-6 pt-8 pb-24">
+            <ResultsDisplay
+              score={scanSession.healthScore}
+              ingredients={scanSession.ingredients}
+              onNewScan={handleNewScan}
+              onShare={handleShare}
+            />
+          </div>
+        )}
+
+        {/* Bottom Navigation */}
+        <BottomNavbar activeTab={activeTab} onTabChange={handleTabChange} />
       </div>
-    </ErrorBoundary>
+
+      {/* Desktop View */}
+      <div className="hidden lg:block">
+        <div className="max-w-6xl mx-auto px-8 py-12">
+          {/* Profile Icon */}
+          <div className="absolute top-6 right-8">
+            <button className="w-12 h-12 rounded-full bg-gray-200 flex items-center justify-center">
+              <User className="w-6 h-6 text-gray-700" />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-16 items-center min-h-screen">
+            {/* Left Column - Content */}
+            <div>
+              <p className="text-gray-600 text-lg mb-8 font-light">welcome back, User ⭐</p>
+              <h1 className="text-5xl text-black leading-tight font-normal mb-12 tracking-tight">
+                Scan your food ingredients with our AI
+              </h1>
+
+              <div className="flex items-center mb-12">
+                <div className="flex-1 h-px bg-gray-200"></div>
+                <span className="px-6 text-gray-500 text-lg font-light">your recent scans</span>
+                <div className="flex-1 h-px bg-gray-200"></div>
+              </div>
+
+              {/* Desktop Navigation */}
+              <div className="flex space-x-6">
+                <button 
+                  onClick={() => handleTabChange('scan')}
+                  className="w-16 h-16 bg-gray-100 hover:bg-gray-200 transition-colors rounded-xl flex items-center justify-center"
+                >
+                  <Scan className="w-8 h-8 text-gray-700" />
+                </button>
+                <button 
+                  onClick={() => handleTabChange('home')}
+                  className={`w-16 h-16 transition-colors rounded-xl flex items-center justify-center ${
+                    activeTab === 'home' ? 'bg-lime-400 hover:bg-lime-500' : 'bg-gray-100 hover:bg-gray-200'
+                  }`}
+                >
+                  <HomeIcon className={`w-8 h-8 ${activeTab === 'home' ? 'text-black' : 'text-gray-700'}`} />
+                </button>
+              </div>
+
+              {error && (
+                <div className="mt-8 p-4 bg-red-50 border border-red-200 rounded-lg">
+                  <p className="text-red-700 text-sm">{error}</p>
+                </div>
+              )}
+            </div>
+
+            {/* Right Column - Food History */}
+            <div className="relative">
+              {appState === 'home' && (
+                <div className="aspect-square rounded-3xl overflow-hidden shadow-2xl bg-white p-6">
+                  <FoodHistory scanHistory={scanHistory} />
+                </div>
+              )}
+
+              {appState === 'scan' && (
+                <div className="aspect-square rounded-3xl overflow-hidden shadow-2xl bg-white p-6 flex flex-col">
+                  <div className="text-center mb-4">
+                    <h3 className="text-lg font-semibold text-gray-900 mb-2">Scan Food Label</h3>
+                    <p className="text-sm text-gray-600">Point your camera at the ingredients list</p>
+                  </div>
+                  <div className="flex-1">
+                    <CameraCapture
+                      onImageCapture={handleImageCapture}
+                      isProcessing={appState === 'processing'}
+                    />
+                  </div>
+                </div>
+              )}
+              
+              {appState === 'processing' && (
+                <div className="aspect-square rounded-3xl overflow-hidden shadow-2xl bg-white p-6 flex items-center justify-center">
+                  <LoadingScreen step={processingStep} />
+                </div>
+              )}
+
+              {appState === 'results' && scanSession && (
+                <div className="aspect-square rounded-3xl overflow-hidden shadow-2xl bg-white p-6">
+                  <ResultsDisplay
+                    score={scanSession.healthScore}
+                    ingredients={scanSession.ingredients}
+                    onNewScan={handleNewScan}
+                    onShare={handleShare}
+                  />
+                </div>
+              )}
+
+              {/* Floating Action Button */}
+              <button 
+                onClick={() => handleTabChange('scan')}
+                className="absolute -bottom-6 -right-6 w-20 h-20 bg-lime-400 hover:bg-lime-500 transition-all duration-300 hover:scale-105 rounded-full shadow-lg flex items-center justify-center"
+              >
+                <Scan className="w-10 h-10 text-black" />
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 };
 
