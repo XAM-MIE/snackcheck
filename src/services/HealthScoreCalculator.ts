@@ -266,7 +266,7 @@ export class HealthScoreCalculator {
   /**
    * Check if ingredient name matches any of the given patterns
    */
-  private matchesPatterns(name: string, patterns: RegExp[]): boolean {
+  private matchesPatterns(name: string, patterns: readonly RegExp[]): boolean {
     return patterns.some(pattern => pattern.test(name));
   }
 

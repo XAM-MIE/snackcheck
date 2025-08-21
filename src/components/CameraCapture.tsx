@@ -19,7 +19,7 @@ export const CameraCapture: React.FC<CameraProps> = ({ onImageCapture, isProcess
   
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<CameraError | null>(null);
-  const [hasPermission, setHasPermission] = useState<boolean | null>(null);
+  const [, setHasPermission] = useState<boolean | null>(null);
 
   // Check if camera is supported
   const isCameraSupported = useCallback(() => {
