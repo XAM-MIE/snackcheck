@@ -177,4 +177,227 @@ describe('DemoService', () => {
       expect(DemoService.shouldUseDemoMode()).toBe(false);
     });
   });
-});
+}); 
+ describe('getDemoImageByFilename', () => {
+    it('should return demo image by filename', async () => {
+      const image = await DemoService.getDemoImageByFilename('cereal-label.jpg');
+      
+      expect(image).toBeDefined();
+      expect(image?.filename).toBe('cereal-label.jpg');
+      expect(image?.name).toBe('Cereal Box');
+    });
+
+    it('should return null for non-existent filename', async () => {
+      const image = await DemoService.getDemoImageByFilename('non-existent.jpg');
+      
+      expect(image).toBeNull();
+    });
+  });
+
+  describe('getFallbackResponse', () => {
+    it('should return OCR failure response', async () => {
+      const response = await DemoService.getFallbackResponse('ocrFailure');
+      
+      expect(response).toBeDefined();
+      expect(response.message).toContain('Unable to read');
+      expect(response.suggestedActions).toContain('Improve lighting');
+    });
+
+    it('should return API failure response', async () => {
+      const response = await DemoService.getFallbackResponse('apiFailure');
+      
+      expect(response).toBeDefined();
+      expect(response.message).toContain('database temporarily unavailable');
+      expect(response.useCache).toBe(true);
+    });
+
+    it('should return AI failure response', async () => {
+      const response = await DemoService.getFallbackResponse('aiFailure');
+      
+      expect(response).toBeDefined();
+      expect(response.message).toContain('AI explanation service unavailable');
+      expect(response.fallbackExplanation).toBeDefined();
+    });
+  });
+
+  describe('generateFallbackIngredientData', () => {
+    it('should generate fallback ingredient data', () => {
+      const data = DemoService.generateFallbackIngredientData('test ingredient');
+      
+      expect(data.name).toBe('test ingredient');
+      expect(data.source).toBe('cache');
+      expect(data.nutritionScore).toBe(50);
+      expect(data.explanation).toContain('Demo mode');
+    });
+  });
+
+  describe('generateMockHealthScore', () => {
+    it('should generate mock health score for known demo image', async () => {
+      const score = await DemoService.generateMockHealthScore('Cereal Box');
+      
+      expect(score).toBeDefined();
+      expect(score?.overall).toBeGreaterThan(0);
+      expect(score?.color).toMatch(/^(green|yellow|red)$/);
+      expect(score?.factors).toBeDefined();
+    });
+
+    it('should return null for unknown demo image', async () => {
+      const score = await DemoService.generateMockHealthScore('Unknown Product');
+      
+      expect(score).toBeNull();
+    });
+
+    it('should generate random mock health score when no image specified', async () => {
+      const score = await DemoService.generateMockHealthScore();
+      
+      expect(score).toBeDefined();
+      expect(score?.overall).toBeGreaterThan(0);
+    });
+  });
+
+  describe('enableDemoMode and disableDemoMode', () => {
+    beforeEach(() => {
+      // Mock window.location and history
+      Object.defineProperty(window, 'location', {
+        value: { href: 'http://localhost:3000' },
+        writable: true
+      });
+      Object.defineProperty(window, 'history', {
+        value: { replaceState: vi.fn() },
+        writable: true
+      });
+    });
+
+    it('should enable demo mode via URL parameter', () => {
+      DemoService.enableDemoMode();
+      
+      expect(window.history.replaceState).toHaveBeenCalled();
+    });
+
+    it('should disable demo mode by removing URL parameter', () => {
+      DemoService.disableDemoMode();
+      
+      expect(window.history.replaceState).toHaveBeenCalled();
+    });
+  });
+
+  describe('getDemoModeStatus', () => {
+    it('should return correct status for development mode', () => {
+      process.env.NODE_ENV = 'development';
+      
+      const status = DemoService.getDemoModeStatus();
+      
+      expect(status.isEnabled).toBe(true);
+      expect(status.source).toBe('development');
+    });
+
+    it('should return correct status for environment variable', () => {
+      process.env.NODE_ENV = 'production';
+      process.env.NEXT_PUBLIC_DEMO_MODE = 'true';
+      
+      const status = DemoService.getDemoModeStatus();
+      
+      expect(status.isEnabled).toBe(true);
+      expect(status.source).toBe('environment');
+    });
+
+    it('should return disabled status when no demo mode is active', () => {
+      process.env.NODE_ENV = 'production';
+      process.env.NEXT_PUBLIC_DEMO_MODE = 'false';
+      
+      const status = DemoService.getDemoModeStatus();
+      
+      expect(status.isEnabled).toBe(false);
+      expect(status.source).toBe('disabled');
+    });
+  });
+
+  describe('prePopulateCache', () => {
+    beforeEach(() => {
+      // Mock localStorage
+      Object.defineProperty(window, 'localStorage', {
+        value: {
+          setItem: vi.fn(),
+          getItem: vi.fn(),
+          removeItem: vi.fn()
+        },
+        writable: true
+      });
+    });
+
+    it('should pre-populate cache with demo ingredients', async () => {
+      await DemoService.prePopulateCache();
+      
+      expect(localStorage.setItem).toHaveBeenCalledWith(
+        'snackcheck_demo_cache',
+        expect.stringContaining('ingredients')
+      );
+    });
+
+    it('should handle localStorage errors gracefully', async () => {
+      vi.mocked(localStorage.setItem).mockImplementation(() => {
+        throw new Error('Storage full');
+      });
+
+      await expect(DemoService.prePopulateCache()).resolves.not.toThrow();
+    });
+  });
+
+  describe('clearDemoCache', () => {
+    it('should clear demo cache from localStorage', () => {
+      DemoService.clearDemoCache();
+      
+      expect(localStorage.removeItem).toHaveBeenCalledWith('snackcheck_demo_cache');
+    });
+
+    it('should handle localStorage errors gracefully', () => {
+      vi.mocked(localStorage.removeItem).mockImplementation(() => {
+        throw new Error('Storage error');
+      });
+
+      expect(() => DemoService.clearDemoCache()).not.toThrow();
+    });
+  });
+
+  describe('testDemoFlow', () => {
+    it('should test complete demo flow successfully', async () => {
+      const result = await DemoService.testDemoFlow('Cereal Box');
+      
+      expect(result.success).toBe(true);
+      expect(result.duration).toBeGreaterThan(0);
+      expect(result.steps).toHaveLength(3);
+      expect(result.steps[0].step).toBe('OCR Processing');
+      expect(result.steps[1].step).toBe('Ingredient Lookup');
+      expect(result.steps[2].step).toBe('Health Score Calculation');
+    });
+
+    it('should test random demo flow when no image specified', async () => {
+      const result = await DemoService.testDemoFlow();
+      
+      expect(result.success).toBe(true);
+      expect(result.steps).toHaveLength(3);
+    });
+
+    it('should handle demo flow errors', async () => {
+      // Mock simulateOCRProcessing to fail
+      const originalMethod = DemoService.simulateOCRProcessing;
+      DemoService.simulateOCRProcessing = vi.fn().mockRejectedValue(new Error('Test error'));
+      
+      const result = await DemoService.testDemoFlow('Invalid Image');
+      
+      expect(result.success).toBe(false);
+      expect(result.error).toBeDefined();
+      
+      // Restore original method
+      DemoService.simulateOCRProcessing = originalMethod;
+    });
+
+    it('should measure performance timing', async () => {
+      const result = await DemoService.testDemoFlow();
+      
+      expect(result.duration).toBeGreaterThan(0);
+      result.steps.forEach(step => {
+        expect(step.duration).toBeGreaterThan(0);
+      });
+    });
+  });

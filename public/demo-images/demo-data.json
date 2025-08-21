@@ -4,31 +4,98 @@
       "name": "Cereal Box",
       "filename": "cereal-label.jpg",
       "mockOCRText": "INGREDIENTS: Whole grain oats, sugar, salt, natural flavor, vitamin E (mixed tocopherols) added to preserve freshness.",
-      "expectedIngredients": ["whole grain oats", "sugar", "salt", "natural flavor", "vitamin e"]
+      "expectedIngredients": ["whole grain oats", "sugar", "salt", "natural flavor", "vitamin e"],
+      "expectedScore": 72,
+      "expectedColor": "yellow"
     },
     {
       "name": "Snack Bar", 
       "filename": "snack-bar-label.jpg",
       "mockOCRText": "INGREDIENTS: Almonds, dates, cocoa powder, vanilla extract, sea salt.",
-      "expectedIngredients": ["almonds", "dates", "cocoa powder", "vanilla extract", "sea salt"]
+      "expectedIngredients": ["almonds", "dates", "cocoa powder", "vanilla extract", "sea salt"],
+      "expectedScore": 88,
+      "expectedColor": "green"
     },
     {
       "name": "Yogurt Cup",
       "filename": "yogurt-label.jpg", 
       "mockOCRText": "INGREDIENTS: Cultured pasteurized grade A milk, live cultures (L. bulgaricus, S. thermophilus), sugar, natural strawberry flavor, pectin.",
-      "expectedIngredients": ["milk", "live cultures", "sugar", "natural strawberry flavor", "pectin"]
+      "expectedIngredients": ["milk", "live cultures", "sugar", "natural strawberry flavor", "pectin"],
+      "expectedScore": 68,
+      "expectedColor": "yellow"
     },
     {
       "name": "Crackers",
       "filename": "crackers-label.jpg",
       "mockOCRText": "INGREDIENTS: Enriched wheat flour (wheat flour, niacin, reduced iron, thiamine mononitrate, riboflavin, folic acid), vegetable oil, salt, yeast, malted barley flour.",
-      "expectedIngredients": ["wheat flour", "vegetable oil", "salt", "yeast", "malted barley flour"]
+      "expectedIngredients": ["wheat flour", "vegetable oil", "salt", "yeast", "malted barley flour"],
+      "expectedScore": 58,
+      "expectedColor": "yellow"
     },
     {
       "name": "Juice Box",
       "filename": "juice-label.jpg",
       "mockOCRText": "INGREDIENTS: Apple juice from concentrate (water, apple juice concentrate), natural flavor, ascorbic acid (vitamin C).",
-      "expectedIngredients": ["apple juice concentrate", "water", "natural flavor", "vitamin c"]
+      "expectedIngredients": ["apple juice concentrate", "water", "natural flavor", "vitamin c"],
+      "expectedScore": 65,
+      "expectedColor": "yellow"
+    },
+    {
+      "name": "Protein Bar",
+      "filename": "protein-bar-label.jpg",
+      "mockOCRText": "INGREDIENTS: Whey protein isolate, almonds, dates, coconut oil, natural vanilla flavor, stevia leaf extract.",
+      "expectedIngredients": ["whey protein isolate", "almonds", "dates", "coconut oil", "natural vanilla flavor", "stevia leaf extract"],
+      "expectedScore": 85,
+      "expectedColor": "green"
+    },
+    {
+      "name": "Instant Noodles",
+      "filename": "instant-noodles-label.jpg",
+      "mockOCRText": "INGREDIENTS: Enriched wheat flour, palm oil, salt, monosodium glutamate, sodium phosphate, artificial chicken flavor, yellow 6, red 40.",
+      "expectedIngredients": ["wheat flour", "palm oil", "salt", "monosodium glutamate", "sodium phosphate", "artificial chicken flavor", "yellow 6", "red 40"],
+      "expectedScore": 25,
+      "expectedColor": "red"
+    },
+    {
+      "name": "Organic Soup",
+      "filename": "organic-soup-label.jpg",
+      "mockOCRText": "INGREDIENTS: Organic tomatoes, organic onions, organic carrots, organic celery, organic garlic, sea salt, organic basil, organic oregano.",
+      "expectedIngredients": ["organic tomatoes", "organic onions", "organic carrots", "organic celery", "organic garlic", "sea salt", "organic basil", "organic oregano"],
+      "expectedScore": 92,
+      "expectedColor": "green"
+    },
+    {
+      "name": "Energy Drink",
+      "filename": "energy-drink-label.jpg",
+      "mockOCRText": "INGREDIENTS: Carbonated water, high fructose corn syrup, taurine, caffeine, artificial flavors, sodium benzoate, potassium sorbate, yellow 5, blue 1.",
+      "expectedIngredients": ["carbonated water", "high fructose corn syrup", "taurine", "caffeine", "artificial flavors", "sodium benzoate", "potassium sorbate", "yellow 5", "blue 1"],
+      "expectedScore": 18,
+      "expectedColor": "red"
+    },
+    {
+      "name": "Trail Mix",
+      "filename": "trail-mix-label.jpg",
+      "mockOCRText": "INGREDIENTS: Almonds, cashews, raisins, dried cranberries (cranberries, sugar, sunflower oil), dark chocolate chips (cocoa, sugar, cocoa butter).",
+      "expectedIngredients": ["almonds", "cashews", "raisins", "dried cranberries", "sugar", "sunflower oil", "dark chocolate chips", "cocoa", "cocoa butter"],
+      "expectedScore": 78,
+      "expectedColor": "green"
     }
-  ]
+  ],
+  "fallbackResponses": {
+    "ocrFailure": {
+      "message": "Unable to read the label clearly. Please try again with better lighting or use one of our demo images.",
+      "suggestedActions": ["Improve lighting", "Hold camera steady", "Try demo mode"],
+      "fallbackImage": "cereal-label.jpg"
+    },
+    "apiFailure": {
+      "message": "Ingredient database temporarily unavailable. Using cached data for analysis.",
+      "suggestedActions": ["Check internet connection", "Try again later"],
+      "useCache": true
+    },
+    "aiFailure": {
+      "message": "AI explanation service unavailable. Showing basic ingredient information.",
+      "suggestedActions": ["Try again later"],
+      "fallbackExplanation": "This ingredient could not be analyzed at this time due to service unavailability."
+    }
+  }
 }

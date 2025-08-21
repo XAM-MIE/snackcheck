@@ -3,3 +3,5 @@ export { default as CameraCapture } from './CameraCapture';
 export { default as ResultsDisplay } from './ResultsDisplay';
 export { default as ProcessingScreen } from './ProcessingScreen';
 export { default as SnackCheckApp } from './SnackCheckApp';
+export { default as DemoModeToggle } from './DemoModeToggle';
+export { default as DemoImageSelector } from './DemoImageSelector';
