@@ -10,6 +10,13 @@
     "test": "vitest",
     "test:run": "vitest run",
     "test:performance": "vitest run src/test/performance.test.ts",
+    "test:comprehensive": "vitest run src/test/e2e src/test/cross-browser src/test/performance src/test/ocr src/test/health-scoring",
+    "test:e2e": "vitest run src/test/e2e",
+    "test:cross-browser": "vitest run src/test/cross-browser",
+    "test:benchmarks": "vitest run src/test/performance",
+    "test:ocr": "vitest run src/test/ocr",
+    "test:health-scoring": "vitest run src/test/health-scoring",
+    "test:coverage": "vitest run --coverage",
     "analyze": "ANALYZE=true npm run build",
     "build:production": "NODE_ENV=production npm run build"
   },

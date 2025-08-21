@@ -276,7 +276,7 @@ describe('Performance Tests', () => {
 });
 
 describe('Performance Utilities', () => {
-  it('should debounce function calls correctly', (done) => {
+  it('should debounce function calls correctly', async () => {
     let callCount = 0;
     const debouncedFn = debounce(() => {
       callCount++;
@@ -291,13 +291,11 @@ describe('Performance Utilities', () => {
     expect(callCount).toBe(0);
 
     // Wait for debounce period
-    setTimeout(() => {
-      expect(callCount).toBe(1); // Should only be called once
-      done();
-    }, 150);
+    await new Promise(resolve => setTimeout(resolve, 150));
+    expect(callCount).toBe(1); // Should only be called once
   });
 
-  it('should throttle function calls correctly', (done) => {
+  it('should throttle function calls correctly', async () => {
     let callCount = 0;
     const throttledFn = throttle(() => {
       callCount++;
@@ -311,11 +309,9 @@ describe('Performance Utilities', () => {
     expect(callCount).toBe(1);
 
     // Wait for throttle period
-    setTimeout(() => {
-      throttledFn(); // Should execute now
-      expect(callCount).toBe(2);
-      done();
-    }, 150);
+    await new Promise(resolve => setTimeout(resolve, 150));
+    throttledFn(); // Should execute now
+    expect(callCount).toBe(2);
   });
 });
 
